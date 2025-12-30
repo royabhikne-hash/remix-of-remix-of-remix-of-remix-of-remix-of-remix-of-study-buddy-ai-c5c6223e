@@ -21,6 +21,13 @@ import {
   Cell,
   Legend,
   ReferenceLine,
+  AreaChart,
+  Area,
+  RadarChart,
+  PolarGrid,
+  PolarAngleAxis,
+  PolarRadiusAxis,
+  Radar,
 } from "recharts";
 import {
   X,
@@ -38,6 +45,10 @@ import {
   BarChart3,
   Image,
   Users,
+  Award,
+  Clock,
+  CheckCircle,
+  Star,
 } from "lucide-react";
 
 interface StudentReportModalProps {
@@ -80,6 +91,12 @@ interface ClassAverages {
   avgImprovementScore: number;
 }
 
+interface SchoolInfo {
+  name: string;
+  district: string | null;
+  state: string | null;
+}
+
 const StudentReportModal = ({
   isOpen,
   onClose,
@@ -97,6 +114,7 @@ const StudentReportModal = ({
   const [exportingCharts, setExportingCharts] = useState(false);
   const [classAverages, setClassAverages] = useState<ClassAverages | null>(null);
   const [showComparison, setShowComparison] = useState(true);
+  const [schoolInfo, setSchoolInfo] = useState<SchoolInfo | null>(null);
   const chartsRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -108,6 +126,21 @@ const StudentReportModal = ({
   const loadStudentData = async () => {
     setLoading(true);
     try {
+      // Load student info with school
+      const { data: studentData } = await supabase
+        .from("students")
+        .select("*, schools(*)")
+        .eq("id", studentId)
+        .maybeSingle();
+
+      if (studentData?.schools) {
+        setSchoolInfo({
+          name: (studentData.schools as any).name,
+          district: (studentData.schools as any).district,
+          state: (studentData.schools as any).state,
+        });
+      }
+
       // Load study sessions from last 7 days
       const weekAgo = new Date();
       weekAgo.setDate(weekAgo.getDate() - 7);
@@ -342,9 +375,29 @@ const StudentReportModal = ({
     }));
   };
 
+  // Skill radar chart data
+  const getSkillRadarData = () => {
+    const consistency = sessions.length > 0 ? Math.min(100, sessions.length * 15) : 0;
+    const accuracy = weeklyStats.avgAccuracy;
+    const engagement = Math.min(100, (weeklyStats.totalTimeSpent / 60) * 2);
+    const quizPerformance = quizzes.length > 0 
+      ? Math.round(quizzes.reduce((acc, q) => acc + ((q.correct_count / q.total_questions) * 100), 0) / quizzes.length)
+      : 0;
+    const improvement = weeklyStats.avgImprovementScore;
+
+    return [
+      { skill: "Consistency", value: consistency, fullMark: 100 },
+      { skill: "Accuracy", value: accuracy, fullMark: 100 },
+      { skill: "Engagement", value: engagement, fullMark: 100 },
+      { skill: "Quiz Score", value: quizPerformance, fullMark: 100 },
+      { skill: "Improvement", value: improvement, fullMark: 100 },
+    ];
+  };
+
   const progressData = getProgressChartData();
   const subjectData = getSubjectChartData();
   const understandingChartData = getUnderstandingChartData();
+  const skillRadarData = getSkillRadarData();
 
   const formatDate = (dateStr: string) => {
     return new Date(dateStr).toLocaleDateString("en-IN", {
@@ -355,97 +408,208 @@ const StudentReportModal = ({
     });
   };
 
+  // Calculate overall grade
+  const calculateGrade = () => {
+    const score = (weeklyStats.avgImprovementScore * 0.4) + (weeklyStats.avgAccuracy * 0.3) + (sessions.length * 5 * 0.3);
+    if (score >= 85) return { grade: "A+", color: "#22c55e", label: "Excellent" };
+    if (score >= 75) return { grade: "A", color: "#22c55e", label: "Very Good" };
+    if (score >= 65) return { grade: "B+", color: "#3b82f6", label: "Good" };
+    if (score >= 55) return { grade: "B", color: "#3b82f6", label: "Above Average" };
+    if (score >= 45) return { grade: "C", color: "#f59e0b", label: "Average" };
+    return { grade: "D", color: "#ef4444", label: "Needs Improvement" };
+  };
+
+  const gradeInfo = calculateGrade();
+
   const handleDownloadPdf = async () => {
     setDownloadingPdf(true);
     try {
       const pdf = new jsPDF();
       const pageWidth = pdf.internal.pageSize.getWidth();
-      let yPos = 20;
-      const lineHeight = 7;
-      const margin = 20;
+      const pageHeight = pdf.internal.pageSize.getHeight();
+      let yPos = 15;
+      const lineHeight = 6;
+      const margin = 15;
       const contentWidth = pageWidth - margin * 2;
 
       // Helper function to add new page if needed
       const checkPageBreak = (requiredSpace: number) => {
-        if (yPos + requiredSpace > pdf.internal.pageSize.getHeight() - 20) {
+        if (yPos + requiredSpace > pageHeight - 25) {
           pdf.addPage();
           yPos = 20;
+          // Add header on new page
+          pdf.setFontSize(8);
+          pdf.setTextColor(128, 128, 128);
+          pdf.text("Edu Improvement AI - Student Progress Report", margin, 10);
+          pdf.text(`Page ${pdf.getNumberOfPages()}`, pageWidth - margin, 10, { align: "right" });
+          pdf.setTextColor(0, 0, 0);
         }
       };
 
-      // Title
-      pdf.setFontSize(20);
+      // Header with branding
+      pdf.setFillColor(59, 130, 246); // Primary blue
+      pdf.rect(0, 0, pageWidth, 35, "F");
+      
+      pdf.setTextColor(255, 255, 255);
+      pdf.setFontSize(22);
       pdf.setFont("helvetica", "bold");
-      pdf.text("Student Progress Report", pageWidth / 2, yPos, { align: "center" });
-      yPos += 10;
+      pdf.text("Edu Improvement AI", margin, 15);
+      
+      pdf.setFontSize(12);
+      pdf.setFont("helvetica", "normal");
+      pdf.text("Weekly Progress Report", margin, 23);
+      
+      // School info on header
+      if (schoolInfo) {
+        pdf.setFontSize(10);
+        pdf.text(schoolInfo.name, pageWidth - margin, 15, { align: "right" });
+        pdf.setFontSize(8);
+        pdf.text(`${schoolInfo.district || ""}, ${schoolInfo.state || ""}`, pageWidth - margin, 21, { align: "right" });
+      }
 
-      // Subtitle
+      pdf.setTextColor(255, 255, 255);
+      pdf.setFontSize(8);
+      pdf.text(`Generated: ${new Date().toLocaleDateString("en-IN", { day: "numeric", month: "long", year: "numeric" })}`, margin, 31);
+
+      yPos = 45;
+      pdf.setTextColor(0, 0, 0);
+
+      // Student Info Card
+      pdf.setFillColor(245, 247, 250);
+      pdf.roundedRect(margin, yPos, contentWidth, 28, 3, 3, "F");
+      
+      pdf.setFontSize(16);
+      pdf.setFont("helvetica", "bold");
+      pdf.text(studentName, margin + 5, yPos + 10);
+      
       pdf.setFontSize(10);
       pdf.setFont("helvetica", "normal");
-      pdf.text("Edu Improvement AI", pageWidth / 2, yPos, { align: "center" });
-      yPos += 15;
+      pdf.setTextColor(100, 100, 100);
+      pdf.text(`Class: ${studentClass}`, margin + 5, yPos + 18);
+      pdf.text(`Report Period: Last 7 Days`, margin + 5, yPos + 24);
 
-      // Student Info
+      // Grade badge
+      pdf.setFillColor(
+        gradeInfo.color === "#22c55e" ? 34 : gradeInfo.color === "#3b82f6" ? 59 : gradeInfo.color === "#f59e0b" ? 245 : 239,
+        gradeInfo.color === "#22c55e" ? 197 : gradeInfo.color === "#3b82f6" ? 130 : gradeInfo.color === "#f59e0b" ? 158 : 68,
+        gradeInfo.color === "#22c55e" ? 94 : gradeInfo.color === "#3b82f6" ? 246 : gradeInfo.color === "#f59e0b" ? 11 : 68
+      );
+      pdf.circle(pageWidth - margin - 15, yPos + 14, 12, "F");
+      pdf.setTextColor(255, 255, 255);
       pdf.setFontSize(14);
       pdf.setFont("helvetica", "bold");
-      pdf.text(studentName, margin, yPos);
-      yPos += lineHeight;
+      pdf.text(gradeInfo.grade, pageWidth - margin - 15, yPos + 18, { align: "center" });
+      
+      pdf.setTextColor(0, 0, 0);
+      pdf.setFontSize(8);
+      pdf.text(gradeInfo.label, pageWidth - margin - 15, yPos + 26, { align: "center" });
+
+      yPos += 35;
+
+      // Overall Trend Banner
+      const trendColor = overallTrend === "up" ? { r: 34, g: 197, b: 94 } : overallTrend === "down" ? { r: 239, g: 68, b: 68 } : { r: 156, g: 163, b: 175 };
+      pdf.setFillColor(trendColor.r, trendColor.g, trendColor.b);
+      pdf.roundedRect(margin, yPos, contentWidth, 12, 2, 2, "F");
+      pdf.setTextColor(255, 255, 255);
       pdf.setFontSize(10);
-      pdf.setFont("helvetica", "normal");
-      pdf.text(`Class: ${studentClass}`, margin, yPos);
-      yPos += lineHeight;
-      pdf.text(`Report Date: ${new Date().toLocaleDateString("en-IN")}`, margin, yPos);
-      yPos += lineHeight;
-      pdf.text(`Period: Last 7 Days`, margin, yPos);
-      yPos += 12;
-
-      // Overall Trend
-      pdf.setFontSize(11);
       pdf.setFont("helvetica", "bold");
-      const trendText = overallTrend === "up" ? "📈 Improving" : overallTrend === "down" ? "📉 Declining" : "➡️ Stable";
-      pdf.text(`Overall Trend: ${trendText}`, margin, yPos);
-      yPos += 12;
+      const trendText = overallTrend === "up" ? "📈 IMPROVING - Keep up the great work!" : overallTrend === "down" ? "📉 DECLINING - Needs more focus" : "➡️ STABLE - Consistent performance";
+      pdf.text(trendText, pageWidth / 2, yPos + 8, { align: "center" });
+      
+      yPos += 18;
+      pdf.setTextColor(0, 0, 0);
 
-      // Weekly Summary
-      pdf.setFontSize(12);
+      // Weekly Summary Section
+      pdf.setFontSize(14);
       pdf.setFont("helvetica", "bold");
       pdf.text("Weekly Summary", margin, yPos);
-      yPos += lineHeight;
-      pdf.setFontSize(10);
-      pdf.setFont("helvetica", "normal");
-      pdf.text(`• Study Sessions: ${weeklyStats.totalSessions}`, margin + 5, yPos);
-      yPos += lineHeight;
-      pdf.text(`• Time Spent: ${Math.round(weeklyStats.totalTimeSpent / 60)} minutes`, margin + 5, yPos);
-      yPos += lineHeight;
-      pdf.text(`• Quizzes Taken: ${weeklyStats.totalQuizzes}`, margin + 5, yPos);
-      yPos += lineHeight;
-      pdf.text(`• Average Accuracy: ${weeklyStats.avgAccuracy}%`, margin + 5, yPos);
-      yPos += 12;
+      yPos += 8;
+
+      // Stats boxes
+      const boxWidth = (contentWidth - 15) / 4;
+      const stats = [
+        { label: "Sessions", value: weeklyStats.totalSessions.toString(), color: { r: 59, g: 130, b: 246 } },
+        { label: "Study Time", value: `${Math.round(weeklyStats.totalTimeSpent / 60)}m`, color: { r: 34, g: 197, b: 94 } },
+        { label: "Quizzes", value: weeklyStats.totalQuizzes.toString(), color: { r: 168, g: 85, b: 247 } },
+        { label: "Accuracy", value: `${weeklyStats.avgAccuracy}%`, color: { r: 245, g: 158, b: 11 } },
+      ];
+
+      stats.forEach((stat, i) => {
+        const x = margin + (boxWidth + 5) * i;
+        pdf.setFillColor(stat.color.r, stat.color.g, stat.color.b);
+        pdf.roundedRect(x, yPos, boxWidth, 22, 2, 2, "F");
+        pdf.setTextColor(255, 255, 255);
+        pdf.setFontSize(16);
+        pdf.setFont("helvetica", "bold");
+        pdf.text(stat.value, x + boxWidth / 2, yPos + 10, { align: "center" });
+        pdf.setFontSize(8);
+        pdf.setFont("helvetica", "normal");
+        pdf.text(stat.label, x + boxWidth / 2, yPos + 18, { align: "center" });
+      });
+
+      yPos += 30;
+      pdf.setTextColor(0, 0, 0);
+
+      // Class Comparison
+      if (classAverages) {
+        checkPageBreak(25);
+        pdf.setFontSize(12);
+        pdf.setFont("helvetica", "bold");
+        pdf.text("Comparison with Class Average", margin, yPos);
+        yPos += 7;
+        
+        pdf.setFontSize(9);
+        pdf.setFont("helvetica", "normal");
+        
+        const comparisons = [
+          { label: "Sessions", student: weeklyStats.totalSessions, classAvg: classAverages.avgSessions },
+          { label: "Study Time (min)", student: Math.round(weeklyStats.totalTimeSpent / 60), classAvg: Math.round(classAverages.avgTimeSpent / 60) },
+          { label: "Accuracy", student: weeklyStats.avgAccuracy, classAvg: classAverages.avgAccuracy },
+        ];
+
+        comparisons.forEach((comp) => {
+          const isAbove = comp.student >= comp.classAvg;
+          pdf.setTextColor(isAbove ? 34 : 239, isAbove ? 197 : 68, isAbove ? 94 : 68);
+          const symbol = isAbove ? "▲" : "▼";
+          pdf.text(`${symbol} ${comp.label}: ${comp.student} (Class Avg: ${comp.classAvg})`, margin + 5, yPos);
+          yPos += lineHeight;
+        });
+        yPos += 5;
+      }
 
       // Subjects Studied
       if (subjectsStudied.length > 0) {
-        checkPageBreak(20);
+        checkPageBreak(18);
+        pdf.setTextColor(0, 0, 0);
         pdf.setFontSize(12);
         pdf.setFont("helvetica", "bold");
         pdf.text("Subjects Studied", margin, yPos);
-        yPos += lineHeight;
-        pdf.setFontSize(10);
+        yPos += 7;
+        pdf.setFontSize(9);
         pdf.setFont("helvetica", "normal");
-        pdf.text(`• ${subjectsStudied.join(", ")}`, margin + 5, yPos);
-        yPos += 12;
+        pdf.text(subjectsStudied.join(" • "), margin + 5, yPos);
+        yPos += 10;
       }
 
       // Understanding Levels
       if (Object.keys(understandingDist).length > 0) {
-        checkPageBreak(30);
+        checkPageBreak(25);
         pdf.setFontSize(12);
         pdf.setFont("helvetica", "bold");
         pdf.text("Understanding Levels", margin, yPos);
-        yPos += lineHeight;
-        pdf.setFontSize(10);
+        yPos += 7;
+        pdf.setFontSize(9);
         pdf.setFont("helvetica", "normal");
         Object.entries(understandingDist).forEach(([level, count]) => {
-          pdf.text(`• ${level.charAt(0).toUpperCase() + level.slice(1)}: ${count} sessions`, margin + 5, yPos);
+          const levelColors: Record<string, { r: number; g: number; b: number }> = {
+            excellent: { r: 34, g: 197, b: 94 },
+            good: { r: 59, g: 130, b: 246 },
+            average: { r: 245, g: 158, b: 11 },
+            weak: { r: 239, g: 68, b: 68 },
+          };
+          const color = levelColors[level] || { r: 100, g: 100, b: 100 };
+          pdf.setTextColor(color.r, color.g, color.b);
+          pdf.text(`● ${level.charAt(0).toUpperCase() + level.slice(1)}: ${count} session(s)`, margin + 5, yPos);
           yPos += lineHeight;
         });
         yPos += 5;
@@ -454,14 +618,16 @@ const StudentReportModal = ({
       // Weak Areas
       if (topWeakAreas.length > 0) {
         checkPageBreak(30);
+        pdf.setTextColor(239, 68, 68);
         pdf.setFontSize(12);
         pdf.setFont("helvetica", "bold");
-        pdf.text("Areas Needing Improvement", margin, yPos);
-        yPos += lineHeight;
-        pdf.setFontSize(10);
+        pdf.text("⚠ Areas Needing Improvement", margin, yPos);
+        yPos += 7;
+        pdf.setTextColor(0, 0, 0);
+        pdf.setFontSize(9);
         pdf.setFont("helvetica", "normal");
         topWeakAreas.forEach(([area, count]) => {
-          pdf.text(`• ${area} (mentioned ${count}x)`, margin + 5, yPos);
+          pdf.text(`• ${area} (identified in ${count} session${count > 1 ? "s" : ""})`, margin + 5, yPos);
           yPos += lineHeight;
         });
         yPos += 5;
@@ -470,14 +636,16 @@ const StudentReportModal = ({
       // Strong Areas
       if (topStrongAreas.length > 0) {
         checkPageBreak(30);
+        pdf.setTextColor(34, 197, 94);
         pdf.setFontSize(12);
         pdf.setFont("helvetica", "bold");
-        pdf.text("Strong Areas", margin, yPos);
-        yPos += lineHeight;
-        pdf.setFontSize(10);
+        pdf.text("✓ Strong Areas", margin, yPos);
+        yPos += 7;
+        pdf.setTextColor(0, 0, 0);
+        pdf.setFontSize(9);
         pdf.setFont("helvetica", "normal");
         topStrongAreas.forEach(([area, count]) => {
-          pdf.text(`• ${area} (mentioned ${count}x)`, margin + 5, yPos);
+          pdf.text(`• ${area} (demonstrated in ${count} session${count > 1 ? "s" : ""})`, margin + 5, yPos);
           yPos += lineHeight;
         });
         yPos += 5;
@@ -486,20 +654,20 @@ const StudentReportModal = ({
       // Recent Quiz Results
       if (quizzes.length > 0) {
         checkPageBreak(40);
+        pdf.setTextColor(0, 0, 0);
         pdf.setFontSize(12);
         pdf.setFont("helvetica", "bold");
         pdf.text("Recent Quiz Results", margin, yPos);
-        yPos += lineHeight;
-        pdf.setFontSize(10);
+        yPos += 7;
+        pdf.setFontSize(9);
         pdf.setFont("helvetica", "normal");
         quizzes.slice(0, 5).forEach((quiz) => {
           checkPageBreak(lineHeight);
           const date = new Date(quiz.created_at).toLocaleDateString("en-IN");
-          pdf.text(
-            `• ${date}: Score ${quiz.correct_count}/${quiz.total_questions} (${quiz.accuracy_percentage?.toFixed(0) || 0}%)`,
-            margin + 5,
-            yPos
-          );
+          const percentage = quiz.accuracy_percentage?.toFixed(0) || 0;
+          const color = Number(percentage) >= 70 ? { r: 34, g: 197, b: 94 } : Number(percentage) >= 50 ? { r: 245, g: 158, b: 11 } : { r: 239, g: 68, b: 68 };
+          pdf.setTextColor(color.r, color.g, color.b);
+          pdf.text(`${date}: ${quiz.correct_count}/${quiz.total_questions} correct (${percentage}%)`, margin + 5, yPos);
           yPos += lineHeight;
         });
         yPos += 5;
@@ -508,29 +676,40 @@ const StudentReportModal = ({
       // AI Feedback
       if (aiSummaries.length > 0) {
         checkPageBreak(40);
+        pdf.setTextColor(59, 130, 246);
         pdf.setFontSize(12);
         pdf.setFont("helvetica", "bold");
-        pdf.text("AI Feedback Summary", margin, yPos);
-        yPos += lineHeight;
-        pdf.setFontSize(9);
-        pdf.setFont("helvetica", "normal");
+        pdf.text("AI Study Feedback", margin, yPos);
+        yPos += 7;
+        pdf.setTextColor(80, 80, 80);
+        pdf.setFontSize(8);
+        pdf.setFont("helvetica", "italic");
         aiSummaries.forEach((summary) => {
           checkPageBreak(20);
           const lines = pdf.splitTextToSize(`"${summary}"`, contentWidth - 10);
           lines.forEach((line: string) => {
             pdf.text(line, margin + 5, yPos);
-            yPos += 5;
+            yPos += 4.5;
           });
-          yPos += 5;
+          yPos += 3;
         });
       }
 
       // Footer
-      checkPageBreak(20);
-      yPos = pdf.internal.pageSize.getHeight() - 15;
-      pdf.setFontSize(8);
-      pdf.setFont("helvetica", "italic");
-      pdf.text("Generated by Edu Improvement AI", pageWidth / 2, yPos, { align: "center" });
+      const totalPages = pdf.getNumberOfPages();
+      for (let i = 1; i <= totalPages; i++) {
+        pdf.setPage(i);
+        pdf.setFillColor(59, 130, 246);
+        pdf.rect(0, pageHeight - 15, pageWidth, 15, "F");
+        pdf.setTextColor(255, 255, 255);
+        pdf.setFontSize(8);
+        pdf.setFont("helvetica", "normal");
+        pdf.text("Generated by Edu Improvement AI | Your Personal Study Buddy", pageWidth / 2, pageHeight - 7, { align: "center" });
+        pdf.text(`Page ${i} of ${totalPages}`, pageWidth - margin, pageHeight - 7, { align: "right" });
+        if (schoolInfo) {
+          pdf.text(schoolInfo.name, margin, pageHeight - 7);
+        }
+      }
 
       // Save PDF
       const fileName = `${studentName.replace(/\s+/g, "_")}_Report_${new Date().toISOString().split("T")[0]}.pdf`;
@@ -570,7 +749,7 @@ const StudentReportModal = ({
   return (
     <Dialog open={isOpen} onOpenChange={(open) => !open && onClose()}>
       <DialogContent className="max-w-4xl max-h-[90vh] p-0 overflow-hidden">
-        <DialogHeader className="p-6 pb-4 border-b border-border bg-secondary/30">
+        <DialogHeader className="p-6 pb-4 border-b border-border bg-gradient-to-r from-primary/10 to-accent/10">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-4">
               {studentPhoto ? (
@@ -587,9 +766,19 @@ const StudentReportModal = ({
               <div>
                 <DialogTitle className="text-xl">{studentName}</DialogTitle>
                 <p className="text-muted-foreground">{studentClass}</p>
+                {schoolInfo && (
+                  <p className="text-xs text-muted-foreground">{schoolInfo.name}</p>
+                )}
               </div>
             </div>
             <div className="flex items-center gap-2">
+              {/* Grade Badge */}
+              <div 
+                className="w-12 h-12 rounded-full flex items-center justify-center text-white font-bold text-lg"
+                style={{ backgroundColor: gradeInfo.color }}
+              >
+                {gradeInfo.grade}
+              </div>
               {overallTrend === "up" && (
                 <span className="inline-flex items-center gap-1 px-3 py-1 rounded-full bg-accent/20 text-accent text-sm font-medium">
                   <TrendingUp className="w-4 h-4" /> Improving
@@ -650,7 +839,7 @@ const StudentReportModal = ({
                     </Button>
                   )}
                 </div>
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
                   <div className="edu-card p-4 text-center">
                     <p className="text-3xl font-bold text-primary">{weeklyStats.totalSessions}</p>
                     <p className="text-sm text-muted-foreground">Study Sessions</p>
@@ -701,6 +890,15 @@ const StudentReportModal = ({
                       </div>
                     )}
                   </div>
+                  <div className="edu-card p-4 text-center">
+                    <div 
+                      className="w-10 h-10 rounded-full mx-auto mb-1 flex items-center justify-center text-white font-bold"
+                      style={{ backgroundColor: gradeInfo.color }}
+                    >
+                      {gradeInfo.grade}
+                    </div>
+                    <p className="text-sm text-muted-foreground">{gradeInfo.label}</p>
+                  </div>
                 </div>
               </div>
 
@@ -732,17 +930,21 @@ const StudentReportModal = ({
                   
                   {/* Charts container with ref for export */}
                   <div ref={chartsRef} className="bg-background p-2 rounded-lg">
-                    {/* Progress Over Time Chart with Class Average */}
                     <div className="grid md:grid-cols-2 gap-6 mb-6">
+                      {/* Progress Over Time Chart */}
                       <div className="edu-card p-4">
-                        <h4 className="text-sm font-medium mb-3 text-muted-foreground">
+                        <h4 className="text-sm font-medium mb-3 text-muted-foreground flex items-center gap-2">
+                          <TrendingUp className="w-4 h-4" />
                           Progress Over Time (7 Days)
-                          {showComparison && classAverages && (
-                            <span className="ml-2 text-xs text-primary">— Class Avg Line</span>
-                          )}
                         </h4>
                         <ResponsiveContainer width="100%" height={200}>
-                          <LineChart data={progressData}>
+                          <AreaChart data={progressData}>
+                            <defs>
+                              <linearGradient id="scoreGradient" x1="0" y1="0" x2="0" y2="1">
+                                <stop offset="5%" stopColor="hsl(var(--primary))" stopOpacity={0.3}/>
+                                <stop offset="95%" stopColor="hsl(var(--primary))" stopOpacity={0}/>
+                              </linearGradient>
+                            </defs>
                             <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
                             <XAxis dataKey="date" tick={{ fontSize: 10 }} stroke="hsl(var(--muted-foreground))" />
                             <YAxis tick={{ fontSize: 10 }} stroke="hsl(var(--muted-foreground))" />
@@ -762,45 +964,37 @@ const StudentReportModal = ({
                                 label={{ value: "Class Avg", position: "right", fontSize: 10, fill: "hsl(var(--destructive))" }}
                               />
                             )}
-                            <Line
+                            <Area
                               type="monotone"
                               dataKey="score"
                               stroke="hsl(var(--primary))"
+                              fillOpacity={1}
+                              fill="url(#scoreGradient)"
                               strokeWidth={2}
-                              dot={{ fill: "hsl(var(--primary))", strokeWidth: 2 }}
                               name="Avg Score"
                             />
-                            <Line
-                              type="monotone"
-                              dataKey="time"
-                              stroke="hsl(var(--accent))"
-                              strokeWidth={2}
-                              dot={{ fill: "hsl(var(--accent))", strokeWidth: 2 }}
-                              name="Time (min)"
-                            />
-                          </LineChart>
+                          </AreaChart>
                         </ResponsiveContainer>
                       </div>
 
-                    {/* Understanding Distribution Pie Chart */}
-                    {understandingChartData.length > 0 && (
+                      {/* Skill Radar Chart */}
                       <div className="edu-card p-4">
-                        <h4 className="text-sm font-medium mb-3 text-muted-foreground">Understanding Distribution</h4>
+                        <h4 className="text-sm font-medium mb-3 text-muted-foreground flex items-center gap-2">
+                          <Star className="w-4 h-4" />
+                          Skill Assessment
+                        </h4>
                         <ResponsiveContainer width="100%" height={200}>
-                          <PieChart>
-                            <Pie
-                              data={understandingChartData}
-                              cx="50%"
-                              cy="50%"
-                              innerRadius={40}
-                              outerRadius={70}
-                              paddingAngle={3}
+                          <RadarChart data={skillRadarData}>
+                            <PolarGrid stroke="hsl(var(--border))" />
+                            <PolarAngleAxis dataKey="skill" tick={{ fontSize: 9 }} stroke="hsl(var(--muted-foreground))" />
+                            <PolarRadiusAxis angle={30} domain={[0, 100]} tick={{ fontSize: 8 }} />
+                            <Radar
+                              name="Skills"
                               dataKey="value"
-                            >
-                              {understandingChartData.map((entry, index) => (
-                                <Cell key={`cell-${index}`} fill={entry.color} />
-                              ))}
-                            </Pie>
+                              stroke="hsl(var(--primary))"
+                              fill="hsl(var(--primary))"
+                              fillOpacity={0.4}
+                            />
                             <Tooltip
                               contentStyle={{
                                 backgroundColor: "hsl(var(--card))",
@@ -808,38 +1002,75 @@ const StudentReportModal = ({
                                 borderRadius: "8px",
                               }}
                             />
-                            <Legend
-                              formatter={(value) => <span className="text-foreground text-xs">{value}</span>}
-                            />
-                          </PieChart>
+                          </RadarChart>
                         </ResponsiveContainer>
                       </div>
-                    )}
-                  </div>
-
-                  {/* Subject Performance Bar Chart */}
-                  {subjectData.length > 0 && (
-                    <div className="edu-card p-4 mb-6">
-                      <h4 className="text-sm font-medium mb-3 text-muted-foreground">Subject Performance</h4>
-                      <ResponsiveContainer width="100%" height={200}>
-                        <BarChart data={subjectData}>
-                          <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
-                          <XAxis dataKey="name" tick={{ fontSize: 10 }} stroke="hsl(var(--muted-foreground))" />
-                          <YAxis tick={{ fontSize: 10 }} stroke="hsl(var(--muted-foreground))" />
-                          <Tooltip
-                            contentStyle={{
-                              backgroundColor: "hsl(var(--card))",
-                              border: "1px solid hsl(var(--border))",
-                              borderRadius: "8px",
-                            }}
-                            labelStyle={{ color: "hsl(var(--foreground))" }}
-                          />
-                          <Bar dataKey="sessions" fill="hsl(var(--primary))" name="Sessions" radius={[4, 4, 0, 0]} />
-                          <Bar dataKey="avgScore" fill="hsl(var(--accent))" name="Avg Score" radius={[4, 4, 0, 0]} />
-                        </BarChart>
-                      </ResponsiveContainer>
                     </div>
-                  )}
+
+                    <div className="grid md:grid-cols-2 gap-6">
+                      {/* Understanding Distribution Pie Chart */}
+                      {understandingChartData.length > 0 && (
+                        <div className="edu-card p-4">
+                          <h4 className="text-sm font-medium mb-3 text-muted-foreground flex items-center gap-2">
+                            <Brain className="w-4 h-4" />
+                            Understanding Distribution
+                          </h4>
+                          <ResponsiveContainer width="100%" height={200}>
+                            <PieChart>
+                              <Pie
+                                data={understandingChartData}
+                                cx="50%"
+                                cy="50%"
+                                innerRadius={40}
+                                outerRadius={70}
+                                paddingAngle={3}
+                                dataKey="value"
+                              >
+                                {understandingChartData.map((entry, index) => (
+                                  <Cell key={`cell-${index}`} fill={entry.color} />
+                                ))}
+                              </Pie>
+                              <Tooltip
+                                contentStyle={{
+                                  backgroundColor: "hsl(var(--card))",
+                                  border: "1px solid hsl(var(--border))",
+                                  borderRadius: "8px",
+                                }}
+                              />
+                              <Legend
+                                formatter={(value) => <span className="text-foreground text-xs">{value}</span>}
+                              />
+                            </PieChart>
+                          </ResponsiveContainer>
+                        </div>
+                      )}
+
+                      {/* Subject Performance Bar Chart */}
+                      {subjectData.length > 0 && (
+                        <div className="edu-card p-4">
+                          <h4 className="text-sm font-medium mb-3 text-muted-foreground flex items-center gap-2">
+                            <BookOpen className="w-4 h-4" />
+                            Subject Performance
+                          </h4>
+                          <ResponsiveContainer width="100%" height={200}>
+                            <BarChart data={subjectData}>
+                              <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
+                              <XAxis dataKey="name" tick={{ fontSize: 10 }} stroke="hsl(var(--muted-foreground))" />
+                              <YAxis tick={{ fontSize: 10 }} stroke="hsl(var(--muted-foreground))" />
+                              <Tooltip
+                                contentStyle={{
+                                  backgroundColor: "hsl(var(--card))",
+                                  border: "1px solid hsl(var(--border))",
+                                  borderRadius: "8px",
+                                }}
+                                labelStyle={{ color: "hsl(var(--foreground))" }}
+                              />
+                              <Bar dataKey="avgScore" fill="hsl(var(--accent))" name="Avg Score" radius={[4, 4, 0, 0]} />
+                            </BarChart>
+                          </ResponsiveContainer>
+                        </div>
+                      )}
+                    </div>
                   </div>
                 </div>
               )}
@@ -886,6 +1117,26 @@ const StudentReportModal = ({
 
               {/* Weak & Strong Areas */}
               <div className="grid md:grid-cols-2 gap-6">
+                {topStrongAreas.length > 0 && (
+                  <div>
+                    <h3 className="text-lg font-semibold mb-3 flex items-center gap-2">
+                      <CheckCircle className="w-5 h-5 text-accent" />
+                      Strong Areas
+                    </h3>
+                    <div className="space-y-2">
+                      {topStrongAreas.map(([area, count], i) => (
+                        <div
+                          key={i}
+                          className="flex items-center justify-between p-3 bg-accent/10 rounded-lg"
+                        >
+                          <span className="font-medium">{area}</span>
+                          <span className="text-sm text-muted-foreground">{count} sessions</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
                 {topWeakAreas.length > 0 && (
                   <div>
                     <h3 className="text-lg font-semibold mb-3 flex items-center gap-2">
@@ -898,28 +1149,8 @@ const StudentReportModal = ({
                           key={i}
                           className="flex items-center justify-between p-3 bg-destructive/10 rounded-lg"
                         >
-                          <span className="text-sm">{area}</span>
-                          <span className="text-xs text-muted-foreground">{count}x mentioned</span>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-
-                {topStrongAreas.length > 0 && (
-                  <div>
-                    <h3 className="text-lg font-semibold mb-3 flex items-center gap-2">
-                      <Target className="w-5 h-5 text-accent" />
-                      Strong Areas
-                    </h3>
-                    <div className="space-y-2">
-                      {topStrongAreas.map(([area, count], i) => (
-                        <div
-                          key={i}
-                          className="flex items-center justify-between p-3 bg-accent/10 rounded-lg"
-                        >
-                          <span className="text-sm">{area}</span>
-                          <span className="text-xs text-muted-foreground">{count}x mentioned</span>
+                          <span className="font-medium">{area}</span>
+                          <span className="text-sm text-muted-foreground">{count} sessions</span>
                         </div>
                       ))}
                     </div>
@@ -927,7 +1158,48 @@ const StudentReportModal = ({
                 )}
               </div>
 
-              {/* AI Feedback */}
+              {/* Recent Quiz Results */}
+              {quizzes.length > 0 && (
+                <div>
+                  <h3 className="text-lg font-semibold mb-3 flex items-center gap-2">
+                    <Award className="w-5 h-5 text-primary" />
+                    Recent Quiz Results
+                  </h3>
+                  <div className="space-y-2">
+                    {quizzes.slice(0, 5).map((quiz) => (
+                      <div
+                        key={quiz.id}
+                        className="flex items-center justify-between p-3 bg-secondary/50 rounded-lg"
+                      >
+                        <div className="flex items-center gap-3">
+                          <div className="w-10 h-10 rounded-lg bg-primary/10 flex items-center justify-center">
+                            <FileText className="w-5 h-5 text-primary" />
+                          </div>
+                          <div>
+                            <p className="font-medium">{formatDate(quiz.created_at)}</p>
+                            <p className="text-sm text-muted-foreground">
+                              {quiz.understanding_result || "Quiz completed"}
+                            </p>
+                          </div>
+                        </div>
+                        <div className="text-right">
+                          <p className="font-bold text-lg">
+                            {quiz.correct_count}/{quiz.total_questions}
+                          </p>
+                          <p className={`text-sm font-medium ${
+                            (quiz.accuracy_percentage || 0) >= 70 ? "text-accent" : 
+                            (quiz.accuracy_percentage || 0) >= 50 ? "text-yellow-500" : "text-destructive"
+                          }`}>
+                            {quiz.accuracy_percentage?.toFixed(0)}%
+                          </p>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* AI Feedback Summary */}
               {aiSummaries.length > 0 && (
                 <div>
                   <h3 className="text-lg font-semibold mb-3 flex items-center gap-2">
@@ -936,94 +1208,25 @@ const StudentReportModal = ({
                   </h3>
                   <div className="space-y-3">
                     {aiSummaries.map((summary, i) => (
-                      <div key={i} className="p-4 bg-secondary/50 rounded-lg">
-                        <p className="text-sm text-foreground">{summary}</p>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {/* Recent Quiz Results */}
-              {quizzes.length > 0 && (
-                <div>
-                  <h3 className="text-lg font-semibold mb-3 flex items-center gap-2">
-                    <FileText className="w-5 h-5 text-primary" />
-                    Recent Quiz Results
-                  </h3>
-                  <div className="space-y-2">
-                    {quizzes.slice(0, 5).map((quiz) => (
                       <div
-                        key={quiz.id}
-                        className="flex items-center justify-between p-3 edu-card"
+                        key={i}
+                        className="p-4 bg-muted/50 rounded-lg border-l-4 border-primary"
                       >
-                        <div>
-                          <p className="font-medium">
-                            Score: {quiz.correct_count}/{quiz.total_questions}
-                          </p>
-                          <p className="text-xs text-muted-foreground">
-                            {formatDate(quiz.created_at)}
-                          </p>
-                        </div>
-                        <div className="text-right">
-                          <span
-                            className={`text-lg font-bold ${
-                              (quiz.accuracy_percentage || 0) >= 70
-                                ? "text-accent"
-                                : (quiz.accuracy_percentage || 0) >= 50
-                                ? "text-primary"
-                                : "text-destructive"
-                            }`}
-                          >
-                            {quiz.accuracy_percentage?.toFixed(0) || 0}%
-                          </span>
-                          {quiz.understanding_result && (
-                            <p className="text-xs text-muted-foreground capitalize">
-                              {quiz.understanding_result}
-                            </p>
-                          )}
-                        </div>
+                        <p className="text-sm italic text-muted-foreground">"{summary}"</p>
                       </div>
                     ))}
                   </div>
                 </div>
               )}
 
-              {/* Recent Study Sessions */}
-              {sessions.length > 0 && (
-                <div>
-                  <h3 className="text-lg font-semibold mb-3 flex items-center gap-2">
-                    <BookOpen className="w-5 h-5 text-primary" />
-                    Recent Study Sessions
-                  </h3>
-                  <div className="space-y-2">
-                    {sessions.slice(0, 5).map((session) => (
-                      <div key={session.id} className="p-3 edu-card">
-                        <div className="flex items-center justify-between mb-2">
-                          <p className="font-medium">{session.topic}</p>
-                          <span
-                            className={`text-xs px-2 py-1 rounded-full capitalize ${getUnderstandingColor(
-                              session.understanding_level || "average"
-                            )}`}
-                          >
-                            {session.understanding_level || "average"}
-                          </span>
-                        </div>
-                        <p className="text-xs text-muted-foreground">
-                          {session.subject && `${session.subject} • `}
-                          {formatDate(session.created_at)}
-                          {session.time_spent && ` • ${Math.round(session.time_spent / 60)}m`}
-                        </p>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-
+              {/* No Data State */}
               {sessions.length === 0 && quizzes.length === 0 && (
-                <div className="text-center py-8 text-muted-foreground">
-                  <BookOpen className="w-12 h-12 mx-auto mb-4 opacity-50" />
-                  <p>No study activity in the last 7 days.</p>
+                <div className="text-center py-12">
+                  <BookOpen className="w-16 h-16 mx-auto mb-4 text-muted-foreground/50" />
+                  <h3 className="text-lg font-semibold mb-2">No Data This Week</h3>
+                  <p className="text-muted-foreground">
+                    This student hasn't completed any study sessions in the last 7 days.
+                  </p>
                 </div>
               )}
             </div>

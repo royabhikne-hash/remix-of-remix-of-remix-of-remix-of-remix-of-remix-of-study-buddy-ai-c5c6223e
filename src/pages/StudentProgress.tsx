@@ -5,14 +5,24 @@ import {
   BookOpen,
   ArrowLeft,
   TrendingUp,
+  TrendingDown,
   Calendar,
   Clock,
   Target,
   Brain,
   BarChart3,
+  Award,
+  Flame,
+  Zap,
+  Star,
+  CheckCircle,
+  Download,
+  Loader2,
 } from "lucide-react";
 import { useAuth } from "@/hooks/useAuth";
 import { supabase } from "@/integrations/supabase/client";
+import { useToast } from "@/hooks/use-toast";
+import jsPDF from "jspdf";
 import {
   LineChart,
   Line,
@@ -26,6 +36,15 @@ import {
   PieChart,
   Pie,
   Cell,
+  AreaChart,
+  Area,
+  RadarChart,
+  PolarGrid,
+  PolarAngleAxis,
+  PolarRadiusAxis,
+  Radar,
+  ComposedChart,
+  Legend,
 } from "recharts";
 
 interface StudySession {
@@ -40,14 +59,26 @@ interface StudySession {
   created_at: string;
 }
 
-const COLORS = ["hsl(var(--primary))", "hsl(var(--accent))", "hsl(var(--secondary))", "#8884d8", "#82ca9d"];
+interface QuizAttempt {
+  id: string;
+  accuracy_percentage: number | null;
+  correct_count: number;
+  total_questions: number;
+  created_at: string;
+}
+
+const COLORS = ["hsl(var(--primary))", "hsl(var(--accent))", "#8b5cf6", "#f59e0b", "#ef4444"];
 
 const StudentProgress = () => {
   const navigate = useNavigate();
+  const { toast } = useToast();
   const { user, loading } = useAuth();
   const [sessions, setSessions] = useState<StudySession[]>([]);
+  const [quizzes, setQuizzes] = useState<QuizAttempt[]>([]);
   const [studentName, setStudentName] = useState("Student");
+  const [studentClass, setStudentClass] = useState("");
   const [isLoading, setIsLoading] = useState(true);
+  const [downloadingPdf, setDownloadingPdf] = useState(false);
 
   useEffect(() => {
     if (!loading && !user) {
@@ -73,6 +104,7 @@ const StudentProgress = () => {
 
       if (student) {
         setStudentName(student.full_name);
+        setStudentClass(student.class);
 
         const { data: sessionData } = await supabase
           .from("study_sessions")
@@ -80,8 +112,17 @@ const StudentProgress = () => {
           .eq("student_id", student.id)
           .order("created_at", { ascending: true });
 
+        const { data: quizData } = await supabase
+          .from("quiz_attempts")
+          .select("*")
+          .eq("student_id", student.id)
+          .order("created_at", { ascending: false });
+
         if (sessionData) {
           setSessions(sessionData);
+        }
+        if (quizData) {
+          setQuizzes(quizData);
         }
       }
     } catch (error) {
@@ -91,7 +132,7 @@ const StudentProgress = () => {
     }
   };
 
-  // Calculate improvement over time data
+  // Calculate improvement over time data (last 30 days)
   const getImprovementData = () => {
     const last30Days = sessions.filter(s => {
       const date = new Date(s.created_at);
@@ -138,7 +179,7 @@ const StudentProgress = () => {
         sessions: data.sessions,
       }))
       .sort((a, b) => b.sessions - a.sessions)
-      .slice(0, 5);
+      .slice(0, 6);
   };
 
   // Calculate study patterns (time of day, day of week)
@@ -157,6 +198,7 @@ const StudentProgress = () => {
     return Object.entries(dayData).map(([day, minutes]) => ({
       day,
       minutes,
+      hours: Math.round(minutes / 60 * 10) / 10,
     }));
   };
 
@@ -221,7 +263,158 @@ const StudentProgress = () => {
     const daysStudied = new Set(last30Days.map(s => new Date(s.created_at).toDateString())).size;
     const consistency = Math.round((daysStudied / 30) * 100);
 
-    return { totalSessions, totalMinutes, avgScore, consistency };
+    // Calculate current streak
+    let streak = 0;
+    const today = new Date();
+    for (let i = 0; i < 30; i++) {
+      const checkDate = new Date(today);
+      checkDate.setDate(checkDate.getDate() - i);
+      const hasSession = sessions.some(s => 
+        new Date(s.created_at).toDateString() === checkDate.toDateString()
+      );
+      if (hasSession) {
+        streak++;
+      } else if (i > 0) {
+        break;
+      }
+    }
+
+    // Quiz stats
+    const totalQuizzes = quizzes.length;
+    const avgQuizAccuracy = totalQuizzes > 0
+      ? Math.round(quizzes.reduce((acc, q) => acc + (q.accuracy_percentage || 0), 0) / totalQuizzes)
+      : 0;
+
+    return { totalSessions, totalMinutes, avgScore, consistency, streak, totalQuizzes, avgQuizAccuracy };
+  };
+
+  // Skill radar data
+  const getSkillRadarData = () => {
+    const stats = getOverallStats();
+    return [
+      { skill: "Consistency", value: stats.consistency, fullMark: 100 },
+      { skill: "Quiz Accuracy", value: stats.avgQuizAccuracy, fullMark: 100 },
+      { skill: "Engagement", value: Math.min(100, (stats.totalMinutes / 60) * 2), fullMark: 100 },
+      { skill: "Improvement", value: stats.avgScore, fullMark: 100 },
+      { skill: "Sessions", value: Math.min(100, stats.totalSessions * 5), fullMark: 100 },
+    ];
+  };
+
+  // Weekly comparison data
+  const getWeeklyComparison = () => {
+    const weeks: { week: string; sessions: number; time: number; score: number }[] = [];
+    for (let i = 3; i >= 0; i--) {
+      const weekStart = new Date();
+      weekStart.setDate(weekStart.getDate() - (i + 1) * 7);
+      const weekEnd = new Date();
+      weekEnd.setDate(weekEnd.getDate() - i * 7);
+      
+      const weekSessions = sessions.filter(s => {
+        const date = new Date(s.created_at);
+        return date >= weekStart && date < weekEnd;
+      });
+
+      weeks.push({
+        week: `Week ${4 - i}`,
+        sessions: weekSessions.length,
+        time: Math.round(weekSessions.reduce((acc, s) => acc + (s.time_spent || 0), 0) / 60),
+        score: weekSessions.length > 0
+          ? Math.round(weekSessions.reduce((acc, s) => acc + (s.improvement_score || 50), 0) / weekSessions.length)
+          : 0,
+      });
+    }
+    return weeks;
+  };
+
+  // Calculate grade
+  const calculateGrade = () => {
+    const stats = getOverallStats();
+    const score = (stats.avgScore * 0.4) + (stats.avgQuizAccuracy * 0.3) + (stats.consistency * 0.3);
+    if (score >= 85) return { grade: "A+", color: "#22c55e", label: "Excellent" };
+    if (score >= 75) return { grade: "A", color: "#22c55e", label: "Very Good" };
+    if (score >= 65) return { grade: "B+", color: "#3b82f6", label: "Good" };
+    if (score >= 55) return { grade: "B", color: "#3b82f6", label: "Above Average" };
+    if (score >= 45) return { grade: "C", color: "#f59e0b", label: "Average" };
+    return { grade: "D", color: "#ef4444", label: "Needs Improvement" };
+  };
+
+  const handleDownloadPdf = async () => {
+    setDownloadingPdf(true);
+    try {
+      const pdf = new jsPDF();
+      const pageWidth = pdf.internal.pageSize.getWidth();
+      const pageHeight = pdf.internal.pageSize.getHeight();
+      let yPos = 15;
+      const margin = 15;
+      const stats = getOverallStats();
+      const gradeInfo = calculateGrade();
+
+      // Header
+      pdf.setFillColor(59, 130, 246);
+      pdf.rect(0, 0, pageWidth, 30, "F");
+      pdf.setTextColor(255, 255, 255);
+      pdf.setFontSize(18);
+      pdf.setFont("helvetica", "bold");
+      pdf.text("Edu Improvement AI - Progress Report", margin, 15);
+      pdf.setFontSize(10);
+      pdf.text(`Generated: ${new Date().toLocaleDateString("en-IN")}`, margin, 24);
+
+      yPos = 40;
+      pdf.setTextColor(0, 0, 0);
+
+      // Student Info
+      pdf.setFontSize(14);
+      pdf.setFont("helvetica", "bold");
+      pdf.text(studentName, margin, yPos);
+      pdf.setFontSize(10);
+      pdf.setFont("helvetica", "normal");
+      pdf.text(`Class: ${studentClass} | Grade: ${gradeInfo.grade} (${gradeInfo.label})`, margin, yPos + 7);
+      yPos += 20;
+
+      // Stats
+      pdf.setFontSize(12);
+      pdf.setFont("helvetica", "bold");
+      pdf.text("Overall Statistics", margin, yPos);
+      yPos += 8;
+      pdf.setFontSize(9);
+      pdf.setFont("helvetica", "normal");
+      
+      const statsText = [
+        `Total Sessions: ${stats.totalSessions}`,
+        `Total Study Time: ${Math.floor(stats.totalMinutes / 60)}h ${stats.totalMinutes % 60}m`,
+        `Average Score: ${stats.avgScore}%`,
+        `Consistency: ${stats.consistency}%`,
+        `Current Streak: ${stats.streak} days`,
+        `Quiz Accuracy: ${stats.avgQuizAccuracy}%`,
+      ];
+      statsText.forEach(text => {
+        pdf.text(`• ${text}`, margin + 5, yPos);
+        yPos += 6;
+      });
+
+      // Footer
+      pdf.setFillColor(59, 130, 246);
+      pdf.rect(0, pageHeight - 12, pageWidth, 12, "F");
+      pdf.setTextColor(255, 255, 255);
+      pdf.setFontSize(8);
+      pdf.text("Edu Improvement AI - Your Personal Study Buddy", pageWidth / 2, pageHeight - 5, { align: "center" });
+
+      pdf.save(`${studentName.replace(/\s+/g, "_")}_Progress_${new Date().toISOString().split("T")[0]}.pdf`);
+      
+      toast({
+        title: "PDF Downloaded!",
+        description: "Your progress report has been saved.",
+      });
+    } catch (error) {
+      console.error("Error generating PDF:", error);
+      toast({
+        title: "Download Failed",
+        description: "Could not generate PDF. Please try again.",
+        variant: "destructive",
+      });
+    } finally {
+      setDownloadingPdf(false);
+    }
   };
 
   if (loading || isLoading) {
@@ -243,6 +436,9 @@ const StudentProgress = () => {
   const understandingData = getUnderstandingDistribution();
   const areasAnalysis = getAreasAnalysis();
   const stats = getOverallStats();
+  const skillRadarData = getSkillRadarData();
+  const weeklyData = getWeeklyComparison();
+  const gradeInfo = calculateGrade();
 
   return (
     <div className="min-h-screen bg-background">
@@ -262,13 +458,36 @@ const StudentProgress = () => {
                 <p className="text-xs text-muted-foreground">{studentName}</p>
               </div>
             </div>
+            <div className="flex items-center gap-3">
+              <div 
+                className="w-12 h-12 rounded-full flex items-center justify-center text-white font-bold text-lg"
+                style={{ backgroundColor: gradeInfo.color }}
+              >
+                {gradeInfo.grade}
+              </div>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={handleDownloadPdf}
+                disabled={downloadingPdf}
+              >
+                {downloadingPdf ? (
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                ) : (
+                  <>
+                    <Download className="w-4 h-4 mr-2" />
+                    Download PDF
+                  </>
+                )}
+              </Button>
+            </div>
           </div>
         </div>
       </header>
 
       <main className="container mx-auto px-4 py-8">
         {/* Overall Stats */}
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
+        <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-4 mb-8">
           <StatCard
             icon={<Calendar className="w-5 h-5" />}
             label="Total Sessions"
@@ -293,22 +512,47 @@ const StudentProgress = () => {
             value={`${stats.consistency}%`}
             color="accent"
           />
+          <StatCard
+            icon={<Flame className="w-5 h-5" />}
+            label="Streak"
+            value={`${stats.streak} days`}
+            color="primary"
+            highlight={stats.streak >= 3}
+          />
+          <StatCard
+            icon={<Award className="w-5 h-5" />}
+            label="Quizzes"
+            value={stats.totalQuizzes.toString()}
+            color="accent"
+          />
+          <StatCard
+            icon={<Zap className="w-5 h-5" />}
+            label="Quiz Accuracy"
+            value={`${stats.avgQuizAccuracy}%`}
+            color="primary"
+          />
         </div>
 
-        {/* Charts Grid */}
-        <div className="grid md:grid-cols-2 gap-6 mb-8">
+        {/* Charts Grid - Row 1 */}
+        <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6 mb-8">
           {/* Improvement Over Time */}
-          <div className="edu-card p-6">
+          <div className="edu-card p-6 lg:col-span-2">
             <h3 className="font-bold text-lg mb-4 flex items-center gap-2">
               <TrendingUp className="w-5 h-5 text-primary" />
-              Improvement Over Time
+              Improvement Over Time (Last 30 Days)
             </h3>
             {improvementData.length > 0 ? (
-              <ResponsiveContainer width="100%" height={250}>
-                <LineChart data={improvementData}>
+              <ResponsiveContainer width="100%" height={280}>
+                <AreaChart data={improvementData}>
+                  <defs>
+                    <linearGradient id="scoreGradient" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="5%" stopColor="hsl(var(--primary))" stopOpacity={0.3}/>
+                      <stop offset="95%" stopColor="hsl(var(--primary))" stopOpacity={0}/>
+                    </linearGradient>
+                  </defs>
                   <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
-                  <XAxis dataKey="date" stroke="hsl(var(--muted-foreground))" fontSize={12} />
-                  <YAxis stroke="hsl(var(--muted-foreground))" fontSize={12} domain={[0, 100]} />
+                  <XAxis dataKey="date" stroke="hsl(var(--muted-foreground))" fontSize={11} />
+                  <YAxis stroke="hsl(var(--muted-foreground))" fontSize={11} domain={[0, 100]} />
                   <Tooltip 
                     contentStyle={{ 
                       backgroundColor: "hsl(var(--card))", 
@@ -316,22 +560,58 @@ const StudentProgress = () => {
                       borderRadius: "8px"
                     }} 
                   />
-                  <Line 
+                  <Area 
                     type="monotone" 
                     dataKey="score" 
                     stroke="hsl(var(--primary))" 
                     strokeWidth={3}
-                    dot={{ fill: "hsl(var(--primary))", r: 4 }}
+                    fillOpacity={1}
+                    fill="url(#scoreGradient)"
                   />
-                </LineChart>
+                </AreaChart>
               </ResponsiveContainer>
             ) : (
-              <div className="h-[250px] flex items-center justify-center text-muted-foreground">
-                No data available yet
+              <div className="h-[280px] flex items-center justify-center text-muted-foreground">
+                <div className="text-center">
+                  <BookOpen className="w-12 h-12 mx-auto mb-4 opacity-50" />
+                  <p>Start studying to see your progress!</p>
+                </div>
               </div>
             )}
           </div>
 
+          {/* Skill Radar */}
+          <div className="edu-card p-6">
+            <h3 className="font-bold text-lg mb-4 flex items-center gap-2">
+              <Star className="w-5 h-5 text-primary" />
+              Skill Assessment
+            </h3>
+            <ResponsiveContainer width="100%" height={280}>
+              <RadarChart data={skillRadarData}>
+                <PolarGrid stroke="hsl(var(--border))" />
+                <PolarAngleAxis dataKey="skill" tick={{ fontSize: 10 }} stroke="hsl(var(--muted-foreground))" />
+                <PolarRadiusAxis angle={30} domain={[0, 100]} tick={{ fontSize: 9 }} />
+                <Radar
+                  name="Skills"
+                  dataKey="value"
+                  stroke="hsl(var(--primary))"
+                  fill="hsl(var(--primary))"
+                  fillOpacity={0.4}
+                />
+                <Tooltip
+                  contentStyle={{
+                    backgroundColor: "hsl(var(--card))",
+                    border: "1px solid hsl(var(--border))",
+                    borderRadius: "8px",
+                  }}
+                />
+              </RadarChart>
+            </ResponsiveContainer>
+          </div>
+        </div>
+
+        {/* Charts Grid - Row 2 */}
+        <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6 mb-8">
           {/* Subject Performance */}
           <div className="edu-card p-6">
             <h3 className="font-bold text-lg mb-4 flex items-center gap-2">
@@ -340,10 +620,10 @@ const StudentProgress = () => {
             </h3>
             {subjectData.length > 0 ? (
               <ResponsiveContainer width="100%" height={250}>
-                <BarChart data={subjectData}>
+                <BarChart data={subjectData} layout="vertical">
                   <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
-                  <XAxis dataKey="subject" stroke="hsl(var(--muted-foreground))" fontSize={11} />
-                  <YAxis stroke="hsl(var(--muted-foreground))" fontSize={12} domain={[0, 100]} />
+                  <XAxis type="number" stroke="hsl(var(--muted-foreground))" fontSize={10} domain={[0, 100]} />
+                  <YAxis dataKey="subject" type="category" stroke="hsl(var(--muted-foreground))" fontSize={10} width={80} />
                   <Tooltip 
                     contentStyle={{ 
                       backgroundColor: "hsl(var(--card))", 
@@ -351,7 +631,7 @@ const StudentProgress = () => {
                       borderRadius: "8px"
                     }} 
                   />
-                  <Bar dataKey="avgScore" fill="hsl(var(--accent))" radius={[4, 4, 0, 0]} />
+                  <Bar dataKey="avgScore" fill="hsl(var(--accent))" radius={[0, 4, 4, 0]} name="Avg Score" />
                 </BarChart>
               </ResponsiveContainer>
             ) : (
@@ -359,6 +639,32 @@ const StudentProgress = () => {
                 No data available yet
               </div>
             )}
+          </div>
+
+          {/* Weekly Comparison */}
+          <div className="edu-card p-6">
+            <h3 className="font-bold text-lg mb-4 flex items-center gap-2">
+              <BarChart3 className="w-5 h-5 text-primary" />
+              Weekly Comparison
+            </h3>
+            <ResponsiveContainer width="100%" height={250}>
+              <ComposedChart data={weeklyData}>
+                <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
+                <XAxis dataKey="week" stroke="hsl(var(--muted-foreground))" fontSize={11} />
+                <YAxis yAxisId="left" stroke="hsl(var(--muted-foreground))" fontSize={10} />
+                <YAxis yAxisId="right" orientation="right" stroke="hsl(var(--muted-foreground))" fontSize={10} />
+                <Tooltip 
+                  contentStyle={{ 
+                    backgroundColor: "hsl(var(--card))", 
+                    border: "1px solid hsl(var(--border))",
+                    borderRadius: "8px"
+                  }} 
+                />
+                <Legend />
+                <Bar yAxisId="left" dataKey="sessions" fill="hsl(var(--primary))" name="Sessions" radius={[4, 4, 0, 0]} />
+                <Line yAxisId="right" type="monotone" dataKey="score" stroke="hsl(var(--accent))" strokeWidth={2} name="Avg Score" />
+              </ComposedChart>
+            </ResponsiveContainer>
           </div>
 
           {/* Study Patterns */}
@@ -370,8 +676,8 @@ const StudentProgress = () => {
             <ResponsiveContainer width="100%" height={250}>
               <BarChart data={patternData}>
                 <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
-                <XAxis dataKey="day" stroke="hsl(var(--muted-foreground))" fontSize={12} />
-                <YAxis stroke="hsl(var(--muted-foreground))" fontSize={12} />
+                <XAxis dataKey="day" stroke="hsl(var(--muted-foreground))" fontSize={11} />
+                <YAxis stroke="hsl(var(--muted-foreground))" fontSize={10} />
                 <Tooltip 
                   contentStyle={{ 
                     backgroundColor: "hsl(var(--card))", 
@@ -384,7 +690,10 @@ const StudentProgress = () => {
               </BarChart>
             </ResponsiveContainer>
           </div>
+        </div>
 
+        {/* Charts Grid - Row 3 */}
+        <div className="grid md:grid-cols-2 gap-6 mb-8">
           {/* Understanding Distribution */}
           <div className="edu-card p-6">
             <h3 className="font-bold text-lg mb-4 flex items-center gap-2">
@@ -392,37 +701,98 @@ const StudentProgress = () => {
               Understanding Levels
             </h3>
             {understandingData.length > 0 ? (
-              <ResponsiveContainer width="100%" height={250}>
-                <PieChart>
-                  <Pie
-                    data={understandingData}
-                    cx="50%"
-                    cy="50%"
-                    outerRadius={80}
-                    fill="hsl(var(--primary))"
-                    dataKey="value"
-                    label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`}
-                    labelLine={false}
-                  >
-                    {understandingData.map((_, index) => (
-                      <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
-                    ))}
-                  </Pie>
-                  <Tooltip 
-                    contentStyle={{ 
-                      backgroundColor: "hsl(var(--card))", 
-                      border: "1px solid hsl(var(--border))",
-                      borderRadius: "8px"
-                    }} 
-                  />
-                </PieChart>
-              </ResponsiveContainer>
+              <div className="flex items-center gap-6">
+                <ResponsiveContainer width="50%" height={220}>
+                  <PieChart>
+                    <Pie
+                      data={understandingData}
+                      cx="50%"
+                      cy="50%"
+                      innerRadius={50}
+                      outerRadius={80}
+                      fill="hsl(var(--primary))"
+                      dataKey="value"
+                      labelLine={false}
+                    >
+                      {understandingData.map((_, index) => (
+                        <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                      ))}
+                    </Pie>
+                    <Tooltip 
+                      contentStyle={{ 
+                        backgroundColor: "hsl(var(--card))", 
+                        border: "1px solid hsl(var(--border))",
+                        borderRadius: "8px"
+                      }} 
+                    />
+                  </PieChart>
+                </ResponsiveContainer>
+                <div className="flex-1 space-y-2">
+                  {understandingData.map((item, index) => (
+                    <div key={item.name} className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <div 
+                          className="w-3 h-3 rounded-full" 
+                          style={{ backgroundColor: COLORS[index % COLORS.length] }}
+                        />
+                        <span className="text-sm">{item.name}</span>
+                      </div>
+                      <span className="font-semibold">{item.value}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
             ) : (
-              <div className="h-[250px] flex items-center justify-center text-muted-foreground">
+              <div className="h-[220px] flex items-center justify-center text-muted-foreground">
                 No data available yet
               </div>
             )}
           </div>
+
+          {/* Quiz Performance */}
+          {quizzes.length > 0 && (
+            <div className="edu-card p-6">
+              <h3 className="font-bold text-lg mb-4 flex items-center gap-2">
+                <Award className="w-5 h-5 text-primary" />
+                Recent Quiz Performance
+              </h3>
+              <div className="space-y-3">
+                {quizzes.slice(0, 5).map((quiz) => {
+                  const percentage = quiz.accuracy_percentage || 0;
+                  return (
+                    <div key={quiz.id} className="flex items-center justify-between p-3 bg-secondary/30 rounded-lg">
+                      <div>
+                        <p className="font-medium text-sm">
+                          {new Date(quiz.created_at).toLocaleDateString("en-IN", {
+                            day: "numeric",
+                            month: "short",
+                          })}
+                        </p>
+                        <p className="text-xs text-muted-foreground">
+                          {quiz.correct_count}/{quiz.total_questions} correct
+                        </p>
+                      </div>
+                      <div className="flex items-center gap-3">
+                        <div className="w-24 h-2 bg-muted rounded-full overflow-hidden">
+                          <div 
+                            className={`h-full rounded-full ${
+                              percentage >= 70 ? "bg-accent" : percentage >= 50 ? "bg-yellow-500" : "bg-destructive"
+                            }`}
+                            style={{ width: `${percentage}%` }}
+                          />
+                        </div>
+                        <span className={`font-bold text-sm ${
+                          percentage >= 70 ? "text-accent" : percentage >= 50 ? "text-yellow-500" : "text-destructive"
+                        }`}>
+                          {percentage.toFixed(0)}%
+                        </span>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Areas Analysis */}
@@ -430,14 +800,19 @@ const StudentProgress = () => {
           {/* Strong Areas */}
           <div className="edu-card p-6">
             <h3 className="font-bold text-lg mb-4 text-accent flex items-center gap-2">
-              <TrendingUp className="w-5 h-5" />
+              <CheckCircle className="w-5 h-5" />
               Strong Areas
             </h3>
             {areasAnalysis.strong.length > 0 ? (
               <div className="space-y-3">
-                {areasAnalysis.strong.map(([area, count]) => (
+                {areasAnalysis.strong.map(([area, count], index) => (
                   <div key={area} className="flex items-center justify-between p-3 bg-accent/10 rounded-lg">
-                    <span className="font-medium">{area}</span>
+                    <div className="flex items-center gap-3">
+                      <div className="w-8 h-8 rounded-full bg-accent/20 flex items-center justify-center text-accent font-bold text-sm">
+                        {index + 1}
+                      </div>
+                      <span className="font-medium">{area}</span>
+                    </div>
                     <span className="text-sm text-muted-foreground">{count} sessions</span>
                   </div>
                 ))}
@@ -457,9 +832,14 @@ const StudentProgress = () => {
             </h3>
             {areasAnalysis.weak.length > 0 ? (
               <div className="space-y-3">
-                {areasAnalysis.weak.map(([area, count]) => (
+                {areasAnalysis.weak.map(([area, count], index) => (
                   <div key={area} className="flex items-center justify-between p-3 bg-destructive/10 rounded-lg">
-                    <span className="font-medium">{area}</span>
+                    <div className="flex items-center gap-3">
+                      <div className="w-8 h-8 rounded-full bg-destructive/20 flex items-center justify-center text-destructive font-bold text-sm">
+                        {index + 1}
+                      </div>
+                      <span className="font-medium">{area}</span>
+                    </div>
                     <span className="text-sm text-muted-foreground">{count} sessions</span>
                   </div>
                 ))}
@@ -481,11 +861,13 @@ const StatCard = ({
   label,
   value,
   color,
+  highlight = false,
 }: {
   icon: React.ReactNode;
   label: string;
   value: string;
   color: "primary" | "accent";
+  highlight?: boolean;
 }) => {
   const colorClasses = {
     primary: "bg-primary/10 text-primary",
@@ -493,7 +875,7 @@ const StatCard = ({
   };
 
   return (
-    <div className="edu-card p-4">
+    <div className={`edu-card p-4 ${highlight ? "ring-2 ring-accent ring-offset-2" : ""}`}>
       <div className={`w-10 h-10 rounded-lg ${colorClasses[color]} flex items-center justify-center mb-3`}>
         {icon}
       </div>
