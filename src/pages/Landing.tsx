@@ -14,7 +14,7 @@ const Landing = () => {
             <div className="w-10 h-10 rounded-xl bg-primary flex items-center justify-center">
               <BookOpen className="w-6 h-6 text-primary-foreground" />
             </div>
-            <span className="text-xl font-bold text-foreground">EduImprove AI</span>
+            <span className="text-xl font-bold text-foreground">Edu improvement AI</span>
           </div>
           <div className="flex gap-3">
             <Button variant="ghost" onClick={() => navigate("/login")}>
@@ -100,10 +100,10 @@ const Landing = () => {
         <div className="flex flex-col md:flex-row justify-between items-center gap-4">
           <div className="flex items-center gap-2">
             <BookOpen className="w-5 h-5 text-primary" />
-            <span className="font-semibold">EduImprove AI</span>
+            <span className="font-semibold">Edu improvement AI</span>
           </div>
           <p className="text-sm text-muted-foreground">
-            © 2024 EduImprove AI. Making education better.
+            © 2024 Edu improvement AI. Making education better.
           </p>
         </div>
       </footer>
