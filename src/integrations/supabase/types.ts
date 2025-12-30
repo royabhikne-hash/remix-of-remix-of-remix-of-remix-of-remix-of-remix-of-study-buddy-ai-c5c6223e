@@ -14,6 +14,33 @@ export type Database = {
   }
   public: {
     Tables: {
+      admins: {
+        Row: {
+          admin_id: string
+          created_at: string
+          id: string
+          name: string
+          password_hash: string
+          role: Database["public"]["Enums"]["admin_role"]
+        }
+        Insert: {
+          admin_id: string
+          created_at?: string
+          id?: string
+          name: string
+          password_hash: string
+          role?: Database["public"]["Enums"]["admin_role"]
+        }
+        Update: {
+          admin_id?: string
+          created_at?: string
+          id?: string
+          name?: string
+          password_hash?: string
+          role?: Database["public"]["Enums"]["admin_role"]
+        }
+        Relationships: []
+      }
       chat_messages: {
         Row: {
           content: string
@@ -45,6 +72,107 @@ export type Database = {
             columns: ["session_id"]
             isOneToOne: false
             referencedRelation: "study_sessions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      parent_reports: {
+        Row: {
+          created_at: string
+          created_by: string | null
+          created_by_type: string | null
+          id: string
+          pdf_url: string | null
+          report_data: Json
+          report_type: string
+          sent_at: string | null
+          sent_to: string | null
+          student_id: string
+        }
+        Insert: {
+          created_at?: string
+          created_by?: string | null
+          created_by_type?: string | null
+          id?: string
+          pdf_url?: string | null
+          report_data?: Json
+          report_type?: string
+          sent_at?: string | null
+          sent_to?: string | null
+          student_id: string
+        }
+        Update: {
+          created_at?: string
+          created_by?: string | null
+          created_by_type?: string | null
+          id?: string
+          pdf_url?: string | null
+          report_data?: Json
+          report_type?: string
+          sent_at?: string | null
+          sent_to?: string | null
+          student_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "parent_reports_student_id_fkey"
+            columns: ["student_id"]
+            isOneToOne: false
+            referencedRelation: "students"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      quiz_attempts: {
+        Row: {
+          accuracy_percentage: number | null
+          answers: Json
+          correct_count: number
+          created_at: string
+          id: string
+          questions: Json
+          session_id: string
+          student_id: string
+          total_questions: number
+          understanding_result: string | null
+        }
+        Insert: {
+          accuracy_percentage?: number | null
+          answers?: Json
+          correct_count?: number
+          created_at?: string
+          id?: string
+          questions?: Json
+          session_id: string
+          student_id: string
+          total_questions?: number
+          understanding_result?: string | null
+        }
+        Update: {
+          accuracy_percentage?: number | null
+          answers?: Json
+          correct_count?: number
+          created_at?: string
+          id?: string
+          questions?: Json
+          session_id?: string
+          student_id?: string
+          total_questions?: number
+          understanding_result?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "quiz_attempts_session_id_fkey"
+            columns: ["session_id"]
+            isOneToOne: false
+            referencedRelation: "study_sessions"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "quiz_attempts_student_id_fkey"
+            columns: ["student_id"]
+            isOneToOne: false
+            referencedRelation: "students"
             referencedColumns: ["id"]
           },
         ]
@@ -208,6 +336,7 @@ export type Database = {
       [_ in never]: never
     }
     Enums: {
+      admin_role: "super_admin" | "admin"
       board_type: "CBSE" | "ICSE" | "Bihar Board" | "Other"
       improvement_trend: "up" | "down" | "stable"
       understanding_level: "weak" | "average" | "good" | "excellent"
@@ -338,6 +467,7 @@ export type CompositeTypes<
 export const Constants = {
   public: {
     Enums: {
+      admin_role: ["super_admin", "admin"],
       board_type: ["CBSE", "ICSE", "Bihar Board", "Other"],
       improvement_trend: ["up", "down", "stable"],
       understanding_level: ["weak", "average", "good", "excellent"],

@@ -3,14 +3,14 @@ import { useNavigate, Link } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Building2, ArrowLeft, Eye, EyeOff, Shield } from "lucide-react";
+import { Shield, ArrowLeft, Eye, EyeOff } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/integrations/supabase/client";
 
-const SchoolLogin = () => {
+const AdminLogin = () => {
   const navigate = useNavigate();
   const { toast } = useToast();
-  const [schoolId, setSchoolId] = useState("");
+  const [adminId, setAdminId] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
@@ -20,11 +20,11 @@ const SchoolLogin = () => {
     setIsLoading(true);
 
     try {
-      // Check school credentials from database
-      const { data: school, error } = await supabase
-        .from("schools")
+      // Check admin credentials from database
+      const { data: admin, error } = await supabase
+        .from("admins")
         .select("*")
-        .eq("school_id", schoolId)
+        .eq("admin_id", adminId)
         .eq("password_hash", password)
         .maybeSingle();
 
@@ -32,20 +32,20 @@ const SchoolLogin = () => {
         throw error;
       }
 
-      if (school) {
-        localStorage.setItem("userType", "school");
-        localStorage.setItem("schoolId", school.school_id);
-        localStorage.setItem("schoolUUID", school.id);
-        localStorage.setItem("schoolName", school.name);
+      if (admin) {
+        localStorage.setItem("userType", "admin");
+        localStorage.setItem("adminId", admin.id);
+        localStorage.setItem("adminName", admin.name);
+        localStorage.setItem("adminRole", admin.role);
         toast({
-          title: "Welcome!",
-          description: "School dashboard access granted.",
+          title: "Welcome Admin!",
+          description: "Admin dashboard access granted.",
         });
-        navigate("/school-dashboard");
+        navigate("/admin-dashboard");
       } else {
         toast({
           title: "Invalid Credentials",
-          description: "Please check your School ID and password.",
+          description: "Please check your Admin ID and password.",
           variant: "destructive",
         });
       }
@@ -76,31 +76,31 @@ const SchoolLogin = () => {
         <div className="w-full max-w-md">
           <div className="edu-card p-8">
             <div className="text-center mb-8">
-              <div className="w-16 h-16 rounded-2xl bg-accent flex items-center justify-center mx-auto mb-4">
-                <Building2 className="w-8 h-8 text-accent-foreground" />
+              <div className="w-16 h-16 rounded-2xl bg-destructive flex items-center justify-center mx-auto mb-4">
+                <Shield className="w-8 h-8 text-destructive-foreground" />
               </div>
-              <h1 className="text-2xl font-bold">School Login</h1>
-              <p className="text-muted-foreground mt-2">Access your school dashboard</p>
+              <h1 className="text-2xl font-bold">Admin Login</h1>
+              <p className="text-muted-foreground mt-2">Super Admin Access Only</p>
             </div>
 
-            <div className="bg-secondary/50 border border-secondary rounded-xl p-4 mb-6">
+            <div className="bg-destructive/10 border border-destructive/20 rounded-xl p-4 mb-6">
               <div className="flex items-start gap-3">
-                <Shield className="w-5 h-5 text-primary mt-0.5" />
+                <Shield className="w-5 h-5 text-destructive mt-0.5" />
                 <div className="text-sm">
-                  <p className="font-semibold text-foreground">Admin Access Only</p>
-                  <p className="text-muted-foreground">This login is for registered schools only.</p>
+                  <p className="font-semibold text-foreground">Restricted Access</p>
+                  <p className="text-muted-foreground">This login is for authorized administrators only.</p>
                 </div>
               </div>
             </div>
 
             <form onSubmit={handleLogin} className="space-y-5">
               <div>
-                <Label htmlFor="schoolId">School ID</Label>
+                <Label htmlFor="adminId">Admin ID</Label>
                 <Input
-                  id="schoolId"
-                  placeholder="Enter your School ID"
-                  value={schoolId}
-                  onChange={(e) => setSchoolId(e.target.value)}
+                  id="adminId"
+                  placeholder="Enter your Admin ID"
+                  value={adminId}
+                  onChange={(e) => setAdminId(e.target.value)}
                   required
                 />
               </div>
@@ -126,17 +126,14 @@ const SchoolLogin = () => {
                 </div>
               </div>
 
-              <Button type="submit" variant="accent" className="w-full" size="lg" disabled={isLoading}>
-                {isLoading ? "Logging in..." : "Access Dashboard"}
+              <Button type="submit" variant="destructive" className="w-full" size="lg" disabled={isLoading}>
+                {isLoading ? "Logging in..." : "Access Admin Panel"}
               </Button>
             </form>
 
-            <div className="mt-6 pt-4 border-t border-border text-center space-y-2">
-              <Link to="/login" className="text-sm text-muted-foreground hover:text-primary block">
-                Student? Login here →
-              </Link>
-              <Link to="/admin-login" className="text-sm text-muted-foreground hover:text-destructive block">
-                Admin Login →
+            <div className="mt-6 pt-4 border-t border-border text-center">
+              <Link to="/school-login" className="text-sm text-muted-foreground hover:text-primary">
+                School Login →
               </Link>
             </div>
           </div>
@@ -146,4 +143,4 @@ const SchoolLogin = () => {
   );
 };
 
-export default SchoolLogin;
+export default AdminLogin;
