@@ -46,6 +46,7 @@ interface StudyChatProps {
     timeSpent: number; 
     messages: ChatMessage[];
     analysis: RealTimeAnalysis;
+    sessionId?: string;
     quizResult?: {
       correctCount: number;
       totalQuestions: number;
@@ -232,17 +233,32 @@ const StudyChat = ({ onEndStudy, studentId }: StudyChatProps) => {
     }
   };
 
-  const ensureSession = async (): Promise<string | null> => {
-    if (sessionId) return sessionId;
+  const ensureSession = async (detectedTopic?: string): Promise<string | null> => {
+    if (sessionId) {
+      // Update topic if we detected a new one and session already exists
+      if (detectedTopic && detectedTopic !== "General Study") {
+        await supabase
+          .from("study_sessions")
+          .update({ 
+            topic: detectedTopic,
+            subject: detectedTopic 
+          })
+          .eq("id", sessionId);
+      }
+      return sessionId;
+    }
     
     if (!studentId) return null;
+
+    const topicToSave = detectedTopic || currentTopic || "General Study";
 
     try {
       const { data, error } = await supabase
         .from("study_sessions")
         .insert({
           student_id: studentId,
-          topic: currentTopic || "General Study",
+          topic: topicToSave,
+          subject: topicToSave !== "General Study" ? topicToSave : null,
           start_time: startTime.toISOString(),
         })
         .select("id")
@@ -275,13 +291,26 @@ const StudyChat = ({ onEndStudy, studentId }: StudyChatProps) => {
     setSelectedImage(null);
     setIsLoading(true);
 
-    const topicKeywords = ["physics", "chemistry", "maths", "math", "biology", "history", "geography", "english", "hindi", "science", "social"];
+    const topicKeywords = ["physics", "chemistry", "maths", "math", "biology", "history", "geography", "english", "hindi", "science", "social", "economics", "political", "civics", "computer", "bio"];
     const foundTopic = topicKeywords.find((t) => inputValue.toLowerCase().includes(t));
-    if (foundTopic && !currentTopic) {
-      setCurrentTopic(foundTopic.charAt(0).toUpperCase() + foundTopic.slice(1));
+    let detectedTopic = currentTopic;
+    
+    if (foundTopic) {
+      // Map common variations to proper names
+      const topicMap: Record<string, string> = {
+        "maths": "Math",
+        "bio": "Biology",
+        "political": "Political Science",
+        "civics": "Civics",
+        "social": "Social Science"
+      };
+      detectedTopic = topicMap[foundTopic] || foundTopic.charAt(0).toUpperCase() + foundTopic.slice(1);
+      if (!currentTopic) {
+        setCurrentTopic(detectedTopic);
+      }
     }
 
-    const sessId = await ensureSession();
+    const sessId = await ensureSession(detectedTopic);
     if (sessId) {
       await saveMessageToDb(userMessage, sessId);
     }
@@ -420,6 +449,7 @@ const StudyChat = ({ onEndStudy, studentId }: StudyChatProps) => {
         timeSpent: Math.max(Math.round((new Date().getTime() - startTime.getTime()) / 60000), 1),
         messages,
         analysis,
+        sessionId: sessionId || undefined,
         quizResult: {
           correctCount,
           totalQuestions: quizQuestions.length,
@@ -451,6 +481,7 @@ const StudyChat = ({ onEndStudy, studentId }: StudyChatProps) => {
       timeSpent: Math.max(timeSpent, 1),
       messages,
       analysis,
+      sessionId: sessionId || undefined,
     });
   };
 

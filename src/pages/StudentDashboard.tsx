@@ -136,6 +136,7 @@ const StudentDashboard = () => {
             .from("study_sessions")
             .select("*, quiz_attempts(accuracy_percentage)")
             .eq("student_id", student.id)
+            .not("time_spent", "eq", 0)  // Only get sessions that were actually completed
             .order("created_at", { ascending: false });
 
           if (sessions) {
@@ -163,16 +164,19 @@ const StudentDashboard = () => {
               improvementScore: avgScore,
             });
 
-            // Use quiz accuracy for score when available
+            // Use quiz accuracy for score when available, show subject/topic properly
             const recent = sessions.slice(0, 5).map((s) => {
               const quizAttempts = s.quiz_attempts as { accuracy_percentage: number | null }[] | null;
               const score = (quizAttempts && quizAttempts.length > 0 && quizAttempts[0].accuracy_percentage !== null)
                 ? quizAttempts[0].accuracy_percentage
-                : s.improvement_score || 50;
+                : s.improvement_score || 0;
+              
+              // Prefer subject field, then topic field
+              const displayTopic = s.subject || s.topic || "General Study";
               
               return {
                 id: s.id,
-                topic: s.topic || "General Study",
+                topic: displayTopic,
                 date: formatDate(new Date(s.created_at)),
                 duration: s.time_spent || 0,
                 score: Math.round(score),
@@ -213,6 +217,7 @@ const StudentDashboard = () => {
     timeSpent: number; 
     messages: ChatMessage[];
     analysis: RealTimeAnalysis;
+    sessionId?: string;
     quizResult?: {
       correctCount: number;
       totalQuestions: number;
@@ -250,43 +255,74 @@ const StudentDashboard = () => {
           understandingLevel = summary.analysis.currentUnderstanding;
         }
 
-        const { data: sessionData, error } = await supabase.from("study_sessions").insert({
-          student_id: studentId,
-          topic: summary.topic || summary.analysis.topicsCovered[0] || "General Study",
-          time_spent: summary.timeSpent,
-          understanding_level: understandingLevel,
-          improvement_score: improvementScore,
-          weak_areas: summary.analysis.weakAreas,
-          strong_areas: summary.analysis.strongAreas,
-          ai_summary: summary.quizResult 
-            ? `Studied ${summary.topic} for ${summary.timeSpent} minutes. Quiz: ${summary.quizResult.correctCount}/${summary.quizResult.totalQuestions} correct (${summary.quizResult.accuracy}%). Result: ${summary.quizResult.understanding}.`
-            : `Studied ${summary.topic} for ${summary.timeSpent} minutes. Understanding: ${summary.analysis.currentUnderstanding}. Topics covered: ${summary.analysis.topicsCovered.join(", ") || "General concepts"}.`,
-        }).select().single();
+        const topicToSave = summary.topic || summary.analysis.topicsCovered[0] || "General Study";
+        const aiSummary = summary.quizResult 
+          ? `Studied ${summary.topic} for ${summary.timeSpent} minutes. Quiz: ${summary.quizResult.correctCount}/${summary.quizResult.totalQuestions} correct (${summary.quizResult.accuracy}%). Result: ${summary.quizResult.understanding}.`
+          : `Studied ${summary.topic} for ${summary.timeSpent} minutes. Understanding: ${summary.analysis.currentUnderstanding}. Topics covered: ${summary.analysis.topicsCovered.join(", ") || "General concepts"}.`;
 
-        if (error) {
-          console.error("Error saving session:", error);
-        } else {
-          // Save quiz attempt if quiz was taken
-          if (summary.quizResult && sessionData) {
-            const { error: quizError } = await supabase.from("quiz_attempts").insert({
-              student_id: studentId,
-              session_id: sessionData.id,
-              questions: summary.quizResult.questions,
-              answers: summary.quizResult.answers,
-              correct_count: summary.quizResult.correctCount,
-              total_questions: summary.quizResult.totalQuestions,
-              accuracy_percentage: summary.quizResult.accuracy,
-              understanding_result: summary.quizResult.understanding,
-            });
-            
-            if (quizError) {
-              console.error("Error saving quiz attempt:", quizError);
-            }
+        let finalSessionId = summary.sessionId;
+
+        // If session already exists, UPDATE it instead of creating a new one
+        if (summary.sessionId) {
+          const { error } = await supabase
+            .from("study_sessions")
+            .update({
+              topic: topicToSave,
+              subject: topicToSave !== "General Study" ? topicToSave : null,
+              time_spent: summary.timeSpent,
+              understanding_level: understandingLevel,
+              improvement_score: improvementScore,
+              weak_areas: summary.analysis.weakAreas,
+              strong_areas: summary.analysis.strongAreas,
+              ai_summary: aiSummary,
+              end_time: new Date().toISOString(),
+            })
+            .eq("id", summary.sessionId);
+
+          if (error) {
+            console.error("Error updating session:", error);
           }
-          
-          // Refresh data
-          loadStudentData();
+        } else {
+          // Create new session only if one doesn't exist
+          const { data: sessionData, error } = await supabase.from("study_sessions").insert({
+            student_id: studentId,
+            topic: topicToSave,
+            subject: topicToSave !== "General Study" ? topicToSave : null,
+            time_spent: summary.timeSpent,
+            understanding_level: understandingLevel,
+            improvement_score: improvementScore,
+            weak_areas: summary.analysis.weakAreas,
+            strong_areas: summary.analysis.strongAreas,
+            ai_summary: aiSummary,
+          }).select().single();
+
+          if (error) {
+            console.error("Error saving session:", error);
+          } else {
+            finalSessionId = sessionData?.id;
+          }
         }
+
+        // Save quiz attempt if quiz was taken
+        if (summary.quizResult && finalSessionId) {
+          const { error: quizError } = await supabase.from("quiz_attempts").insert({
+            student_id: studentId,
+            session_id: finalSessionId,
+            questions: summary.quizResult.questions,
+            answers: summary.quizResult.answers,
+            correct_count: summary.quizResult.correctCount,
+            total_questions: summary.quizResult.totalQuestions,
+            accuracy_percentage: summary.quizResult.accuracy,
+            understanding_result: summary.quizResult.understanding,
+          });
+          
+          if (quizError) {
+            console.error("Error saving quiz attempt:", quizError);
+          }
+        }
+        
+        // Refresh data
+        loadStudentData();
       } catch (err) {
         console.error("Error saving session:", err);
       }

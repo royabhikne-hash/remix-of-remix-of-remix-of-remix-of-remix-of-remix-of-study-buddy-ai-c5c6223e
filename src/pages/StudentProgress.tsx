@@ -108,8 +108,9 @@ const StudentProgress = () => {
 
         const { data: sessionData } = await supabase
           .from("study_sessions")
-          .select("*")
+          .select("*, quiz_attempts(accuracy_percentage)")
           .eq("student_id", student.id)
+          .not("time_spent", "eq", 0)  // Only get completed sessions
           .order("created_at", { ascending: true });
 
         const { data: quizData } = await supabase
@@ -119,7 +120,19 @@ const StudentProgress = () => {
           .order("created_at", { ascending: false });
 
         if (sessionData) {
-          setSessions(sessionData);
+          // Enhance sessions with quiz accuracy as the primary score
+          const enhancedSessions = sessionData.map(session => {
+            const quizAttempts = (session as any).quiz_attempts as { accuracy_percentage: number | null }[] | null;
+            const quizScore = (quizAttempts && quizAttempts.length > 0 && quizAttempts[0].accuracy_percentage !== null)
+              ? quizAttempts[0].accuracy_percentage
+              : null;
+            
+            return {
+              ...session,
+              improvement_score: quizScore !== null ? quizScore : session.improvement_score,
+            };
+          });
+          setSessions(enhancedSessions);
         }
         if (quizData) {
           setQuizzes(quizData);
@@ -146,38 +159,49 @@ const StudentProgress = () => {
       if (!acc[date]) {
         acc[date] = { scores: [], time: 0 };
       }
-      acc[date].scores.push(session.improvement_score || 50);
+      // Only include sessions with actual scores (not default 50)
+      if (session.improvement_score !== null && session.improvement_score !== undefined) {
+        acc[date].scores.push(session.improvement_score);
+      }
       acc[date].time += session.time_spent || 0;
       return acc;
     }, {} as Record<string, { scores: number[]; time: number }>);
 
     return Object.entries(grouped).map(([date, data]) => ({
       date,
-      score: Math.round(data.scores.reduce((a, b) => a + b, 0) / data.scores.length),
+      score: data.scores.length > 0 ? Math.round(data.scores.reduce((a, b) => a + b, 0) / data.scores.length) : null,
       time: data.time,
-    }));
+    })).filter(d => d.score !== null);
   };
 
   // Calculate subject-wise performance
   const getSubjectPerformance = () => {
     const subjectData = sessions.reduce((acc, session) => {
-      const subject = session.subject || session.topic || "Other";
+      const subject = session.subject || session.topic || "General Study";
+      // Skip "General Study" for cleaner subject performance view
+      if (subject === "General Study") return acc;
+      
       if (!acc[subject]) {
-        acc[subject] = { sessions: 0, totalScore: 0, totalTime: 0 };
+        acc[subject] = { sessions: 0, totalScore: 0, totalTime: 0, scoreCount: 0 };
       }
       acc[subject].sessions++;
-      acc[subject].totalScore += session.improvement_score || 50;
+      // Only add to score if we have a real score
+      if (session.improvement_score !== null && session.improvement_score !== undefined) {
+        acc[subject].totalScore += session.improvement_score;
+        acc[subject].scoreCount++;
+      }
       acc[subject].totalTime += session.time_spent || 0;
       return acc;
-    }, {} as Record<string, { sessions: number; totalScore: number; totalTime: number }>);
+    }, {} as Record<string, { sessions: number; totalScore: number; totalTime: number; scoreCount: number }>);
 
     return Object.entries(subjectData)
       .map(([subject, data]) => ({
         subject: subject.length > 12 ? subject.slice(0, 12) + "..." : subject,
-        avgScore: Math.round(data.totalScore / data.sessions),
+        avgScore: data.scoreCount > 0 ? Math.round(data.totalScore / data.scoreCount) : 0,
         totalTime: data.totalTime,
         sessions: data.sessions,
       }))
+      .filter(s => s.sessions > 0)
       .sort((a, b) => b.sessions - a.sessions)
       .slice(0, 6);
   };
@@ -250,8 +274,11 @@ const StudentProgress = () => {
   const getOverallStats = () => {
     const totalSessions = sessions.length;
     const totalMinutes = sessions.reduce((acc, s) => acc + (s.time_spent || 0), 0);
-    const avgScore = totalSessions > 0
-      ? Math.round(sessions.reduce((acc, s) => acc + (s.improvement_score || 50), 0) / totalSessions)
+    
+    // Only calculate avg from sessions with actual scores
+    const sessionsWithScores = sessions.filter(s => s.improvement_score !== null && s.improvement_score !== undefined);
+    const avgScore = sessionsWithScores.length > 0
+      ? Math.round(sessionsWithScores.reduce((acc, s) => acc + (s.improvement_score || 0), 0) / sessionsWithScores.length)
       : 0;
     
     // Calculate consistency (unique days studied in last 30 days)
