@@ -6,6 +6,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import jsPDF from "jspdf";
 import html2canvas from "html2canvas";
+import { ReportSkeleton } from "@/components/DashboardSkeleton";
 import {
   LineChart,
   Line,
@@ -1065,10 +1066,7 @@ const StudentReportModal = ({
 
         <ScrollArea className="max-h-[calc(90vh-140px)]">
           {loading ? (
-            <div className="flex flex-col items-center justify-center py-16 gap-3">
-              <Loader2 className="w-10 h-10 animate-spin text-primary" />
-              <p className="text-muted-foreground">Loading student data...</p>
-            </div>
+            <ReportSkeleton />
           ) : (
             <div className="p-6 space-y-8">
               {/* Weekly Summary Stats with Class Comparison */}
@@ -1153,7 +1151,101 @@ const StudentReportModal = ({
                 </div>
               </div>
 
-              {/* Study Streak & Engagement Score */}
+              {/* What Child Studied This Week - Detailed Breakdown */}
+              {sessions.length > 0 && (
+                <div className="bg-gradient-to-br from-indigo-500/10 via-blue-500/10 to-cyan-500/10 rounded-2xl p-5 border border-indigo-500/20">
+                  <h3 className="text-lg font-bold flex items-center gap-2 mb-4">
+                    <FileText className="w-5 h-5 text-indigo-500" />
+                    इस हफ्ते बच्चे ने क्या पढ़ा (What Child Studied This Week)
+                  </h3>
+                  
+                  {/* Total Study Summary */}
+                  <div className="bg-background/50 rounded-xl p-4 mb-4">
+                    <div className="grid grid-cols-3 gap-4 text-center">
+                      <div>
+                        <p className="text-2xl font-bold text-primary">{sessions.length}</p>
+                        <p className="text-xs text-muted-foreground">कुल sessions</p>
+                      </div>
+                      <div>
+                        <p className="text-2xl font-bold text-accent">{Math.round(weeklyStats.totalTimeSpent / 60)}</p>
+                        <p className="text-xs text-muted-foreground">कुल मिनट</p>
+                      </div>
+                      <div>
+                        <p className="text-2xl font-bold text-purple-500">{subjectsStudied.length}</p>
+                        <p className="text-xs text-muted-foreground">विषय पढ़े</p>
+                      </div>
+                    </div>
+                  </div>
+                  
+                  {/* Detailed Session Log */}
+                  <div className="space-y-3 max-h-64 overflow-y-auto">
+                    <p className="text-sm font-medium text-muted-foreground mb-2">हर session की detail:</p>
+                    {sessions.slice(0, 10).map((session, i) => {
+                      const sessionDate = new Date(session.created_at);
+                      const dayName = sessionDate.toLocaleDateString("hi-IN", { weekday: "short" });
+                      const dateStr = sessionDate.toLocaleDateString("en-IN", { day: "numeric", month: "short" });
+                      const timeStr = sessionDate.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" });
+                      
+                      return (
+                        <div key={i} className="flex items-start gap-3 p-3 bg-background/70 rounded-xl border border-border/50">
+                          <div className="flex-shrink-0 w-12 text-center">
+                            <p className="text-xs font-medium text-muted-foreground">{dayName}</p>
+                            <p className="text-sm font-bold">{dateStr}</p>
+                            <p className="text-[10px] text-muted-foreground">{timeStr}</p>
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2 mb-1">
+                              <p className="font-medium text-sm truncate">{session.topic || session.subject || "General Study"}</p>
+                              <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium ${getUnderstandingColor(session.understanding_level || "average")}`}>
+                                {session.understanding_level || "average"}
+                              </span>
+                            </div>
+                            <div className="flex items-center gap-3 text-xs text-muted-foreground">
+                              <span className="flex items-center gap-1">
+                                <Clock className="w-3 h-3" />
+                                {session.time_spent || 0} min
+                              </span>
+                              <span className="flex items-center gap-1">
+                                <Target className="w-3 h-3" />
+                                Score: {session.improvement_score || 50}%
+                              </span>
+                            </div>
+                            {session.ai_summary && (
+                              <p className="text-xs text-muted-foreground mt-1 line-clamp-2 italic">
+                                "{session.ai_summary}"
+                              </p>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
+                    {sessions.length > 10 && (
+                      <p className="text-xs text-center text-muted-foreground py-2">
+                        +{sessions.length - 10} more sessions...
+                      </p>
+                    )}
+                  </div>
+                  
+                  {/* Topics Covered Summary */}
+                  {topicPerformance.length > 0 && (
+                    <div className="mt-4 pt-4 border-t border-border/50">
+                      <p className="text-sm font-medium mb-2">Topics covered summary:</p>
+                      <div className="flex flex-wrap gap-2">
+                        {topicPerformance.map((topic, i) => (
+                          <span 
+                            key={i} 
+                            className="inline-flex items-center gap-1 px-2 py-1 rounded-lg bg-primary/10 text-xs"
+                          >
+                            <span className="font-medium">{topic.topic}</span>
+                            <span className="text-muted-foreground">({topic.sessions}x, {topic.avgScore}%)</span>
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+
               <div className="grid md:grid-cols-2 gap-6">
                 {/* Study Streak Card */}
                 <div className="bg-gradient-to-br from-orange-500/10 via-red-500/10 to-pink-500/10 rounded-2xl p-5 border border-orange-500/20">

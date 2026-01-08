@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   BookOpen,
   Clock,
@@ -15,7 +16,10 @@ import {
   MessageCircle,
   Loader2,
   History,
+  CalendarDays,
+  Sun,
 } from "lucide-react";
+import { DashboardSkeleton } from "@/components/DashboardSkeleton";
 import StudyChat from "@/components/StudyChat";
 import ChatHistory from "@/components/ChatHistory";
 import { ThemeToggle } from "@/components/ThemeToggle";
@@ -60,11 +64,21 @@ const StudentDashboard = () => {
   const [rejectionReason, setRejectionReason] = useState<string | null>(null);
   const [schoolName, setSchoolName] = useState<string>("");
   
-  const [stats, setStats] = useState({
-    todayStudied: false,
-    totalSessions: 0,
-    todayMinutes: 0, // Today's study time only
-    improvementScore: 50,
+  const [analyticsView, setAnalyticsView] = useState<"today" | "week">("today");
+  const [isDataLoading, setIsDataLoading] = useState(true);
+  
+  const [todayStats, setTodayStats] = useState({
+    sessions: 0,
+    minutes: 0,
+    avgScore: 0,
+    studied: false,
+  });
+  
+  const [weekStats, setWeekStats] = useState({
+    sessions: 0,
+    minutes: 0,
+    avgScore: 0,
+    daysStudied: 0,
   });
 
   const [recentSessions, setRecentSessions] = useState<RecentSession[]>([]);
@@ -122,6 +136,8 @@ const StudentDashboard = () => {
         .eq("user_id", user.id)
         .maybeSingle();
 
+      setIsDataLoading(true);
+      
       if (student) {
         setUserName(student.full_name);
         setStudentId(student.id);
@@ -141,40 +157,58 @@ const StudentDashboard = () => {
             .order("created_at", { ascending: false });
 
           if (sessions) {
-            // Calculate TODAY's study time only
-            const today = new Date().toDateString();
-            const todaySessions = sessions.filter(s => new Date(s.created_at).toDateString() === today);
-            const todayTime = todaySessions.reduce((acc, s) => acc + (s.time_spent || 0), 0);
+            const today = new Date();
+            const todayStr = today.toDateString();
             
-            // Calculate average score using quiz accuracy when available
-            const scoresWithQuiz = sessions.map(s => {
-              const quizAttempts = s.quiz_attempts as { accuracy_percentage: number | null }[] | null;
-              if (quizAttempts && quizAttempts.length > 0 && quizAttempts[0].accuracy_percentage !== null) {
-                return quizAttempts[0].accuracy_percentage;
-              }
-              return s.improvement_score || 50;
+            // Get the start of this week (Sunday = 0)
+            const currentDay = today.getDay();
+            const weekStart = new Date(today);
+            weekStart.setDate(today.getDate() - currentDay);
+            weekStart.setHours(0, 0, 0, 0);
+            
+            // Filter today's sessions
+            const todaySessions = sessions.filter(s => new Date(s.created_at).toDateString() === todayStr);
+            
+            // Filter this week's sessions (since last Sunday)
+            const weekSessions = sessions.filter(s => new Date(s.created_at) >= weekStart);
+            
+            // Calculate scores helper
+            const getAvgScore = (sessionList: typeof sessions) => {
+              const scores = sessionList.map(s => {
+                const quizAttempts = s.quiz_attempts as { accuracy_percentage: number | null }[] | null;
+                if (quizAttempts && quizAttempts.length > 0 && quizAttempts[0].accuracy_percentage !== null) {
+                  return quizAttempts[0].accuracy_percentage;
+                }
+                return s.improvement_score || 50;
+              });
+              return scores.length > 0 
+                ? Math.round(scores.reduce((acc, s) => acc + s, 0) / scores.length)
+                : 0;
+            };
+            
+            // Today stats (refresh every 24 hours)
+            setTodayStats({
+              sessions: todaySessions.length,
+              minutes: todaySessions.reduce((acc, s) => acc + (s.time_spent || 0), 0),
+              avgScore: getAvgScore(todaySessions),
+              studied: todaySessions.length > 0,
             });
-            const avgScore = scoresWithQuiz.length > 0 
-              ? Math.round(scoresWithQuiz.reduce((acc, s) => acc + s, 0) / scoresWithQuiz.length)
-              : 50;
-
-            const studiedToday = todaySessions.length > 0;
-
-            setStats({
-              todayStudied: studiedToday,
-              totalSessions: sessions.length,
-              todayMinutes: todayTime, // Today's time only
-              improvementScore: avgScore,
+            
+            // Week stats (refresh every Sunday)
+            const uniqueDays = new Set(weekSessions.map(s => new Date(s.created_at).toDateString())).size;
+            setWeekStats({
+              sessions: weekSessions.length,
+              minutes: weekSessions.reduce((acc, s) => acc + (s.time_spent || 0), 0),
+              avgScore: getAvgScore(weekSessions),
+              daysStudied: uniqueDays,
             });
 
-            // Use quiz accuracy for score when available, show subject/topic properly
+            // Recent sessions
             const recent = sessions.slice(0, 5).map((s) => {
               const quizAttempts = s.quiz_attempts as { accuracy_percentage: number | null }[] | null;
               const score = (quizAttempts && quizAttempts.length > 0 && quizAttempts[0].accuracy_percentage !== null)
                 ? quizAttempts[0].accuracy_percentage
                 : s.improvement_score || 0;
-              
-              // Prefer subject field, then topic field
               const displayTopic = s.subject || s.topic || "General Study";
               
               return {
@@ -188,9 +222,11 @@ const StudentDashboard = () => {
             setRecentSessions(recent);
           }
         }
+        setIsDataLoading(false);
       } else {
         setUserName(user.user_metadata?.full_name || user.email?.split("@")[0] || "Student");
         setIsApproved(null);
+        setIsDataLoading(false);
       }
     } catch (error) {
       console.error("Error loading student data:", error);
@@ -382,17 +418,8 @@ const StudentDashboard = () => {
     navigate("/");
   };
 
-  if (loading) {
-    return (
-      <div className="min-h-screen bg-background flex items-center justify-center">
-        <div className="text-center">
-          <div className="w-12 h-12 rounded-xl bg-primary flex items-center justify-center mx-auto mb-4 animate-pulse">
-            <BookOpen className="w-6 h-6 text-primary-foreground" />
-          </div>
-          <p className="text-muted-foreground">Loading...</p>
-        </div>
-      </div>
-    );
+  if (loading || isDataLoading) {
+    return <DashboardSkeleton />;
   }
 
   // Show pending approval or rejection screen
@@ -506,7 +533,7 @@ const StudentDashboard = () => {
               Namaste, {userName}! 👋
             </h1>
             <p className="text-muted-foreground mb-6">
-              {stats.todayStudied
+              {todayStats.studied
                 ? "Great job studying today! Ready for more?"
                 : "Aaj kya padhna hai? Chal start karte hain!"}
             </p>
@@ -536,33 +563,81 @@ const StudentDashboard = () => {
           </div>
         </div>
 
-        {/* Stats Grid */}
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
-          <StatCard
-            icon={<CheckCircle className="w-5 h-5" />}
-            label="Today"
-            value={stats.todayStudied ? "Studied ✓" : "Not Yet"}
-            color={stats.todayStudied ? "accent" : "muted"}
-          />
-          <StatCard
-            icon={<Calendar className="w-5 h-5" />}
-            label="Total Sessions"
-            value={stats.totalSessions.toString()}
-            color="primary"
-          />
-          <StatCard
-            icon={<Clock className="w-5 h-5" />}
-            label="Today's Time"
-            value={`${Math.floor(stats.todayMinutes / 60)}h ${stats.todayMinutes % 60}m`}
-            color="primary"
-          />
-          <StatCard
-            icon={<TrendingUp className="w-5 h-5" />}
-            label="Improvement"
-            value={`${stats.improvementScore}%`}
-            color="accent"
-          />
+        {/* Analytics Toggle */}
+        <div className="flex justify-center mb-6">
+          <Tabs value={analyticsView} onValueChange={(v) => setAnalyticsView(v as "today" | "week")} className="w-auto">
+            <TabsList className="grid grid-cols-2 w-64">
+              <TabsTrigger value="today" className="flex items-center gap-2">
+                <Sun className="w-4 h-4" />
+                Today
+              </TabsTrigger>
+              <TabsTrigger value="week" className="flex items-center gap-2">
+                <CalendarDays className="w-4 h-4" />
+                This Week
+              </TabsTrigger>
+            </TabsList>
+          </Tabs>
         </div>
+
+        {/* Stats Grid - Today View */}
+        {analyticsView === "today" && (
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
+            <StatCard
+              icon={<CheckCircle className="w-5 h-5" />}
+              label="Today Status"
+              value={todayStats.studied ? "Studied ✓" : "Not Yet"}
+              color={todayStats.studied ? "accent" : "muted"}
+            />
+            <StatCard
+              icon={<BookOpen className="w-5 h-5" />}
+              label="Today Sessions"
+              value={todayStats.sessions.toString()}
+              color="primary"
+            />
+            <StatCard
+              icon={<Clock className="w-5 h-5" />}
+              label="Today's Time"
+              value={`${Math.floor(todayStats.minutes / 60)}h ${todayStats.minutes % 60}m`}
+              color="primary"
+            />
+            <StatCard
+              icon={<TrendingUp className="w-5 h-5" />}
+              label="Today Score"
+              value={todayStats.avgScore > 0 ? `${todayStats.avgScore}%` : "-"}
+              color="accent"
+            />
+          </div>
+        )}
+
+        {/* Stats Grid - Week View */}
+        {analyticsView === "week" && (
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
+            <StatCard
+              icon={<CalendarDays className="w-5 h-5" />}
+              label="Days Studied"
+              value={`${weekStats.daysStudied}/7`}
+              color={weekStats.daysStudied >= 5 ? "accent" : "primary"}
+            />
+            <StatCard
+              icon={<BookOpen className="w-5 h-5" />}
+              label="Week Sessions"
+              value={weekStats.sessions.toString()}
+              color="primary"
+            />
+            <StatCard
+              icon={<Clock className="w-5 h-5" />}
+              label="Week Time"
+              value={`${Math.floor(weekStats.minutes / 60)}h ${weekStats.minutes % 60}m`}
+              color="primary"
+            />
+            <StatCard
+              icon={<TrendingUp className="w-5 h-5" />}
+              label="Week Avg Score"
+              value={weekStats.avgScore > 0 ? `${weekStats.avgScore}%` : "-"}
+              color="accent"
+            />
+          </div>
+        )}
 
         {/* Recent Sessions */}
         <div className="edu-card p-6">

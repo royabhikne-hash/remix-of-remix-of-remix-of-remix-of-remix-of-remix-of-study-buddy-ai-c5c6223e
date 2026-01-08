@@ -23,6 +23,7 @@ import { useAuth } from "@/hooks/useAuth";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import jsPDF from "jspdf";
+import { ProgressSkeleton } from "@/components/DashboardSkeleton";
 import {
   LineChart,
   Line,
@@ -445,16 +446,7 @@ const StudentProgress = () => {
   };
 
   if (loading || isLoading) {
-    return (
-      <div className="min-h-screen bg-background flex items-center justify-center">
-        <div className="text-center">
-          <div className="w-12 h-12 rounded-xl bg-primary flex items-center justify-center mx-auto mb-4 animate-pulse">
-            <BookOpen className="w-6 h-6 text-primary-foreground" />
-          </div>
-          <p className="text-muted-foreground">Loading progress...</p>
-        </div>
-      </div>
-    );
+    return <ProgressSkeleton />;
   }
 
   const improvementData = getImprovementData();
