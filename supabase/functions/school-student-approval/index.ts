@@ -7,11 +7,44 @@ const corsHeaders = {
 
 interface SchoolStudentApprovalRequest {
   action: "approve" | "reject" | "bulk_approve" | "bulk_reject";
-  schoolId: string; // This is school_id from schools table (login ID)
-  schoolUuid: string; // This is the actual UUID of the school
+  schoolId: string;
+  schoolUuid: string;
+  sessionToken: string; // Required session token for validation
   studentId?: string;
-  studentIds?: string[]; // For bulk operations
+  studentIds?: string[];
   rejectionReason?: string;
+}
+
+// Validate session token from database
+async function validateSessionToken(
+  supabase: any,
+  token: string,
+  expectedUserType: 'admin' | 'school',
+  expectedUserId?: string
+): Promise<{ valid: boolean; userId?: string; userType?: string }> {
+  const { data, error } = await supabase
+    .from('session_tokens')
+    .select('user_id, user_type, expires_at, is_revoked')
+    .eq('token', token)
+    .maybeSingle();
+  
+  if (error || !data) {
+    return { valid: false };
+  }
+  
+  if (data.is_revoked || new Date(data.expires_at) < new Date()) {
+    return { valid: false };
+  }
+  
+  if (data.user_type !== expectedUserType) {
+    return { valid: false };
+  }
+  
+  if (expectedUserId && data.user_id !== expectedUserId) {
+    return { valid: false };
+  }
+  
+  return { valid: true, userId: data.user_id, userType: data.user_type };
 }
 
 const handler = async (req: Request): Promise<Response> => {
@@ -23,14 +56,13 @@ const handler = async (req: Request): Promise<Response> => {
     const body = (await req.json()) as SchoolStudentApprovalRequest;
 
     // Validate required fields
-    if (!body?.action || !body?.schoolId || !body?.schoolUuid) {
+    if (!body?.action || !body?.schoolId || !body?.schoolUuid || !body?.sessionToken) {
       return new Response(
-        JSON.stringify({ success: false, error: "Missing required fields" }),
+        JSON.stringify({ success: false, error: "Missing required fields including session token" }),
         { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
 
-    // For single operations, require studentId. For bulk operations, require studentIds
     const isBulk = body.action === "bulk_approve" || body.action === "bulk_reject";
     if (!isBulk && !body.studentId) {
       return new Response(
@@ -48,7 +80,7 @@ const handler = async (req: Request): Promise<Response> => {
     const supabaseUrl = Deno.env.get("SUPABASE_URL");
     const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
     if (!supabaseUrl || !supabaseServiceKey) {
-      console.error("Missing backend env vars: SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY");
+      console.error("Missing backend env vars");
       return new Response(
         JSON.stringify({ success: false, error: "Backend configuration error" }),
         { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
@@ -57,7 +89,16 @@ const handler = async (req: Request): Promise<Response> => {
 
     const admin = createClient(supabaseUrl, supabaseServiceKey);
 
-    // Validate school by UUID - this is more secure than password check
+    // Validate session token against database
+    const validation = await validateSessionToken(admin, body.sessionToken, 'school', body.schoolUuid);
+    if (!validation.valid) {
+      return new Response(
+        JSON.stringify({ success: false, error: "Invalid or expired session" }),
+        { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
+    // Verify school exists and is not banned
     const { data: school, error: schoolError } = await admin
       .from("schools")
       .select("id, name, school_id, is_banned, fee_paid")
@@ -65,22 +106,13 @@ const handler = async (req: Request): Promise<Response> => {
       .eq("school_id", body.schoolId)
       .maybeSingle();
 
-    if (schoolError) {
-      console.error("School lookup error:", schoolError);
+    if (schoolError || !school) {
       return new Response(
         JSON.stringify({ success: false, error: "School validation failed" }),
-        { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
-    }
-
-    if (!school) {
-      return new Response(
-        JSON.stringify({ success: false, error: "Invalid school session" }),
         { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
 
-    // Check if school is banned or fee not paid
     if (school.is_banned) {
       return new Response(
         JSON.stringify({ success: false, error: "School is banned" }),
@@ -99,7 +131,6 @@ const handler = async (req: Request): Promise<Response> => {
     if (isBulk) {
       const studentIds = body.studentIds!;
       
-      // Verify all students belong to this school
       const { data: students, error: studentsError } = await admin
         .from("students")
         .select("id, school_id")
@@ -113,7 +144,6 @@ const handler = async (req: Request): Promise<Response> => {
         );
       }
 
-      // Check if all students belong to this school
       const invalidStudents = students?.filter(s => s.school_id !== school.id) || [];
       if (invalidStudents.length > 0) {
         return new Response(
@@ -146,7 +176,6 @@ const handler = async (req: Request): Promise<Response> => {
         );
       }
 
-      // Bulk reject
       const reason = (body.rejectionReason || "No reason provided").trim();
       const { error: rejectError } = await admin
         .from("students")
@@ -177,15 +206,7 @@ const handler = async (req: Request): Promise<Response> => {
       .eq("id", body.studentId)
       .maybeSingle();
 
-    if (studentError) {
-      console.error("Student lookup error:", studentError);
-      return new Response(
-        JSON.stringify({ success: false, error: "Student lookup failed" }),
-        { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
-    }
-
-    if (!student || student.school_id !== school.id) {
+    if (studentError || !student || student.school_id !== school.id) {
       return new Response(
         JSON.stringify({ success: false, error: "Student not found for this school" }),
         { status: 404, headers: { ...corsHeaders, "Content-Type": "application/json" } }

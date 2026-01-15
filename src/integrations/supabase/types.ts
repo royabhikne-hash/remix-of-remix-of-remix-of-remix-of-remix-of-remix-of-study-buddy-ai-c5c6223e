@@ -21,6 +21,8 @@ export type Database = {
           id: string
           name: string
           password_hash: string
+          password_reset_required: boolean | null
+          password_updated_at: string | null
           role: Database["public"]["Enums"]["admin_role"]
         }
         Insert: {
@@ -29,6 +31,8 @@ export type Database = {
           id?: string
           name: string
           password_hash: string
+          password_reset_required?: boolean | null
+          password_updated_at?: string | null
           role?: Database["public"]["Enums"]["admin_role"]
         }
         Update: {
@@ -37,6 +41,8 @@ export type Database = {
           id?: string
           name?: string
           password_hash?: string
+          password_reset_required?: boolean | null
+          password_updated_at?: string | null
           role?: Database["public"]["Enums"]["admin_role"]
         }
         Relationships: []
@@ -242,6 +248,8 @@ export type Database = {
           is_banned: boolean | null
           name: string
           password_hash: string
+          password_reset_required: boolean | null
+          password_updated_at: string | null
           school_id: string
           state: string | null
         }
@@ -255,6 +263,8 @@ export type Database = {
           is_banned?: boolean | null
           name: string
           password_hash: string
+          password_reset_required?: boolean | null
+          password_updated_at?: string | null
           school_id: string
           state?: string | null
         }
@@ -268,8 +278,46 @@ export type Database = {
           is_banned?: boolean | null
           name?: string
           password_hash?: string
+          password_reset_required?: boolean | null
+          password_updated_at?: string | null
           school_id?: string
           state?: string | null
+        }
+        Relationships: []
+      }
+      session_tokens: {
+        Row: {
+          created_at: string
+          expires_at: string
+          id: string
+          ip_address: string | null
+          is_revoked: boolean
+          token: string
+          user_agent: string | null
+          user_id: string
+          user_type: string
+        }
+        Insert: {
+          created_at?: string
+          expires_at: string
+          id?: string
+          ip_address?: string | null
+          is_revoked?: boolean
+          token: string
+          user_agent?: string | null
+          user_id: string
+          user_type: string
+        }
+        Update: {
+          created_at?: string
+          expires_at?: string
+          id?: string
+          ip_address?: string | null
+          is_revoked?: boolean
+          token?: string
+          user_agent?: string | null
+          user_id?: string
+          user_type?: string
         }
         Relationships: []
       }
@@ -461,6 +509,15 @@ export type Database = {
           p_window_minutes?: number
         }
         Returns: boolean
+      }
+      cleanup_expired_sessions: { Args: never; Returns: number }
+      validate_session_token: {
+        Args: { p_token: string }
+        Returns: {
+          is_valid: boolean
+          user_id: string
+          user_type: string
+        }[]
       }
     }
     Enums: {

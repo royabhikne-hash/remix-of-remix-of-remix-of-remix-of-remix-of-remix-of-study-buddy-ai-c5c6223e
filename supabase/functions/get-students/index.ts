@@ -5,6 +5,38 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
+// Validate session token from database
+async function validateSessionToken(
+  supabase: any,
+  token: string,
+  expectedUserType?: 'admin' | 'school',
+  expectedUserId?: string
+): Promise<{ valid: boolean; userId?: string; userType?: string }> {
+  const { data, error } = await supabase
+    .from('session_tokens')
+    .select('user_id, user_type, expires_at, is_revoked')
+    .eq('token', token)
+    .maybeSingle();
+  
+  if (error || !data) {
+    return { valid: false };
+  }
+  
+  if (data.is_revoked || new Date(data.expires_at) < new Date()) {
+    return { valid: false };
+  }
+  
+  if (expectedUserType && data.user_type !== expectedUserType) {
+    return { valid: false };
+  }
+  
+  if (expectedUserId && data.user_id !== expectedUserId) {
+    return { valid: false };
+  }
+  
+  return { valid: true, userId: data.user_id, userType: data.user_type };
+}
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders });
@@ -13,7 +45,6 @@ Deno.serve(async (req) => {
   try {
     const { action, session_token, user_type, school_id, student_id, student_class } = await req.json();
 
-    // Create admin client to bypass RLS
     const supabaseAdmin = createClient(
       Deno.env.get('SUPABASE_URL') ?? '',
       Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '',
@@ -22,24 +53,16 @@ Deno.serve(async (req) => {
 
     // Handle student report data request
     if (action === 'get_student_report') {
-      // Verify session - either school or admin
       let isAuthorized = false;
+      let authorizedSchoolId: string | null = null;
       
-      if (user_type === 'school' && school_id) {
-        const { data: school } = await supabaseAdmin
-          .from('schools')
-          .select('id')
-          .eq('id', school_id)
-          .maybeSingle();
-        isAuthorized = !!school;
-      } else if (user_type === 'admin') {
-        const adminId = session_token?.split('_')[1];
-        const { data: admin } = await supabaseAdmin
-          .from('admins')
-          .select('id')
-          .eq('id', adminId)
-          .maybeSingle();
-        isAuthorized = !!admin;
+      if (user_type === 'school' && school_id && session_token) {
+        const validation = await validateSessionToken(supabaseAdmin, session_token, 'school', school_id);
+        isAuthorized = validation.valid;
+        if (isAuthorized) authorizedSchoolId = school_id;
+      } else if (user_type === 'admin' && session_token) {
+        const validation = await validateSessionToken(supabaseAdmin, session_token, 'admin');
+        isAuthorized = validation.valid;
       }
 
       if (!isAuthorized) {
@@ -55,6 +78,14 @@ Deno.serve(async (req) => {
         .select('*, schools(*)')
         .eq('id', student_id)
         .maybeSingle();
+
+      // For school users, verify the student belongs to their school
+      if (user_type === 'school' && studentData?.school_id !== authorizedSchoolId) {
+        return new Response(
+          JSON.stringify({ error: 'Student does not belong to your school' }),
+          { status: 403, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      }
 
       // Load study sessions from last 7 days
       const weekAgo = new Date();
@@ -83,7 +114,7 @@ Deno.serve(async (req) => {
           .eq('class', student_class);
 
         if (classStudents && classStudents.length > 0) {
-          const studentIds = classStudents.map((s: any) => s.id);
+          const studentIds = classStudents.map((s: { id: string }) => s.id);
 
           const { data: classSessions } = await supabaseAdmin
             .from('study_sessions')
@@ -100,9 +131,9 @@ Deno.serve(async (req) => {
           const studentCount = classStudents.length;
           const totalSessions = classSessions?.length || 0;
           const totalQuizzes = classQuizzes?.length || 0;
-          const totalTimeSpent = classSessions?.reduce((acc: number, s: any) => acc + (s.time_spent || 0), 0) || 0;
-          const totalAccuracy = classQuizzes?.reduce((acc: number, q: any) => acc + (q.accuracy_percentage || 0), 0) || 0;
-          const totalImprovementScore = classSessions?.reduce((acc: number, s: any) => acc + (s.improvement_score || 50), 0) || 0;
+          const totalTimeSpent = classSessions?.reduce((acc: number, s: { time_spent?: number }) => acc + (s.time_spent || 0), 0) || 0;
+          const totalAccuracy = classQuizzes?.reduce((acc: number, q: { accuracy_percentage?: number }) => acc + (q.accuracy_percentage || 0), 0) || 0;
+          const totalImprovementScore = classSessions?.reduce((acc: number, s: { improvement_score?: number }) => acc + (s.improvement_score || 50), 0) || 0;
 
           classAverages = {
             avgSessions: Math.round((totalSessions / studentCount) * 10) / 10,
@@ -125,9 +156,25 @@ Deno.serve(async (req) => {
       );
     }
 
-    // Verify session token for list operations
+    // Validate session token for list operations
+    if (!session_token) {
+      return new Response(
+        JSON.stringify({ error: 'Session token required' }),
+        { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
     if (user_type === 'school') {
-      // Verify school session
+      // Validate school session token
+      const validation = await validateSessionToken(supabaseAdmin, session_token, 'school', school_id);
+      if (!validation.valid) {
+        return new Response(
+          JSON.stringify({ error: 'Invalid or expired school session' }),
+          { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        );
+      }
+
+      // Verify school exists and is not banned
       const { data: school, error } = await supabaseAdmin
         .from('schools')
         .select('id, name, is_banned, fee_paid')
@@ -136,8 +183,8 @@ Deno.serve(async (req) => {
 
       if (error || !school) {
         return new Response(
-          JSON.stringify({ error: 'Invalid school session' }),
-          { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+          JSON.stringify({ error: 'School not found' }),
+          { status: 404, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
         );
       }
 
@@ -164,7 +211,7 @@ Deno.serve(async (req) => {
         );
       }
 
-      // Fetch study sessions for each student to calculate trends
+      // Fetch study sessions for each student
       const studentsWithSessions = await Promise.all(
         (students || []).map(async (student) => {
           const { data: sessions } = await supabaseAdmin
@@ -187,18 +234,11 @@ Deno.serve(async (req) => {
       );
 
     } else if (user_type === 'admin') {
-      // Verify admin session (basic check - in production use proper JWT)
-      const adminId = session_token?.split('_')[1];
-      
-      const { data: admin, error: adminError } = await supabaseAdmin
-        .from('admins')
-        .select('id, name, role')
-        .eq('id', adminId)
-        .maybeSingle();
-
-      if (adminError || !admin) {
+      // Validate admin session token
+      const validation = await validateSessionToken(supabaseAdmin, session_token, 'admin');
+      if (!validation.valid) {
         return new Response(
-          JSON.stringify({ error: 'Invalid admin session' }),
+          JSON.stringify({ error: 'Invalid or expired admin session' }),
           { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
         );
       }

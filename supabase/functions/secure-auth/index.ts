@@ -1,16 +1,20 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import * as bcrypt from "https://deno.land/x/bcrypt@v0.4.1/mod.ts";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
-// Simple in-memory rate limiting (resets on function cold start, but provides basic protection)
+// Session token expiration: 24 hours
+const SESSION_EXPIRY_HOURS = 24;
+
+// Simple in-memory rate limiting (resets on function cold start)
 const loginAttempts = new Map<string, { count: number; lastAttempt: number; blockedUntil: number }>();
 
 const RATE_LIMIT_WINDOW = 15 * 60 * 1000; // 15 minutes
 const MAX_ATTEMPTS = 5;
-const BLOCK_DURATION = 30 * 60 * 1000; // 30 minutes block after exceeding attempts
+const BLOCK_DURATION = 30 * 60 * 1000; // 30 minutes block
 
 function checkRateLimit(identifier: string): { allowed: boolean; waitSeconds?: number } {
   const now = Date.now();
@@ -20,7 +24,6 @@ function checkRateLimit(identifier: string): { allowed: boolean; waitSeconds?: n
     return { allowed: true };
   }
 
-  // Check if blocked
   if (record.blockedUntil > now) {
     return { 
       allowed: false, 
@@ -28,13 +31,11 @@ function checkRateLimit(identifier: string): { allowed: boolean; waitSeconds?: n
     };
   }
 
-  // Reset if window expired
   if (now - record.lastAttempt > RATE_LIMIT_WINDOW) {
     loginAttempts.delete(identifier);
     return { allowed: true };
   }
 
-  // Check if exceeded attempts
   if (record.count >= MAX_ATTEMPTS) {
     record.blockedUntil = now + BLOCK_DURATION;
     return { 
@@ -51,7 +52,6 @@ function recordAttempt(identifier: string, success: boolean) {
   const record = loginAttempts.get(identifier);
 
   if (success) {
-    // Clear on successful login
     loginAttempts.delete(identifier);
     return;
   }
@@ -62,24 +62,6 @@ function recordAttempt(identifier: string, success: boolean) {
     record.count++;
     record.lastAttempt = now;
   }
-}
-
-// Constant-time string comparison to prevent timing attacks
-function secureCompare(a: string, b: string): boolean {
-  if (a.length !== b.length) {
-    // Still do the comparison to maintain constant time
-    let result = 0;
-    for (let i = 0; i < Math.max(a.length, b.length); i++) {
-      result |= (a.charCodeAt(i % a.length) || 0) ^ (b.charCodeAt(i % b.length) || 0);
-    }
-    return false;
-  }
-  
-  let result = 0;
-  for (let i = 0; i < a.length; i++) {
-    result |= a.charCodeAt(i) ^ b.charCodeAt(i);
-  }
-  return result === 0;
 }
 
 // Generate cryptographically secure credentials
@@ -104,8 +86,14 @@ function generateSecureCredentials(): { id: string; password: string } {
   return { id, password };
 }
 
-// Simple password hashing using Web Crypto API (for edge runtime compatibility)
+// Bcrypt password hashing
 async function hashPassword(password: string): Promise<string> {
+  const salt = await bcrypt.genSalt(12);
+  return await bcrypt.hash(password, salt);
+}
+
+// Legacy SHA-256 hash for migration (to check old passwords)
+async function legacyHashPassword(password: string): Promise<string> {
   const encoder = new TextEncoder();
   const data = encoder.encode(password + Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')?.slice(0, 32));
   const hashBuffer = await crypto.subtle.digest('SHA-256', data);
@@ -113,9 +101,103 @@ async function hashPassword(password: string): Promise<string> {
   return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
 }
 
-async function verifyPassword(password: string, storedHash: string): Promise<boolean> {
-  const inputHash = await hashPassword(password);
-  return secureCompare(inputHash, storedHash);
+// Constant-time string comparison
+function secureCompare(a: string, b: string): boolean {
+  if (a.length !== b.length) {
+    let result = 0;
+    for (let i = 0; i < Math.max(a.length, b.length); i++) {
+      result |= (a.charCodeAt(i % a.length) || 0) ^ (b.charCodeAt(i % b.length) || 0);
+    }
+    return false;
+  }
+  
+  let result = 0;
+  for (let i = 0; i < a.length; i++) {
+    result |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  }
+  return result === 0;
+}
+
+async function verifyPassword(password: string, storedHash: string): Promise<{ valid: boolean; isLegacy: boolean; hashType: 'bcrypt' | 'sha256' | 'plaintext' }> {
+  // Check if it's a bcrypt hash (starts with $2a$, $2b$, or $2y$)
+  if (storedHash.startsWith('$2a$') || storedHash.startsWith('$2b$') || storedHash.startsWith('$2y$')) {
+    const valid = await bcrypt.compare(password, storedHash);
+    return { valid, isLegacy: false, hashType: 'bcrypt' };
+  }
+  
+  // Check if it's a SHA-256 hash (64 hex characters)
+  if (/^[a-f0-9]{64}$/i.test(storedHash)) {
+    const legacyHash = await legacyHashPassword(password);
+    const valid = secureCompare(legacyHash, storedHash);
+    return { valid, isLegacy: true, hashType: 'sha256' };
+  }
+  
+  // Plaintext password (legacy - force reset)
+  const valid = secureCompare(password, storedHash);
+  return { valid, isLegacy: true, hashType: 'plaintext' };
+}
+
+// Create session token in database
+async function createSessionToken(
+  supabase: any,
+  userId: string,
+  userType: 'admin' | 'school',
+  clientIp: string,
+  userAgent: string
+): Promise<string> {
+  const token = crypto.randomUUID();
+  const expiresAt = new Date(Date.now() + SESSION_EXPIRY_HOURS * 60 * 60 * 1000);
+  
+  await supabase.from('session_tokens').insert({
+    token,
+    user_id: userId,
+    user_type: userType,
+    expires_at: expiresAt.toISOString(),
+    ip_address: clientIp,
+    user_agent: userAgent
+  });
+  
+  return token;
+}
+
+// Validate session token from database
+async function validateSessionToken(
+  supabase: any,
+  token: string,
+  expectedUserType?: 'admin' | 'school'
+): Promise<{ valid: boolean; userId?: string; userType?: string }> {
+  const { data, error } = await supabase
+    .from('session_tokens')
+    .select('user_id, user_type, expires_at, is_revoked')
+    .eq('token', token)
+    .maybeSingle();
+  
+  if (error || !data) {
+    return { valid: false };
+  }
+  
+  if (data.is_revoked || new Date(data.expires_at) < new Date()) {
+    return { valid: false };
+  }
+  
+  if (expectedUserType && data.user_type !== expectedUserType) {
+    return { valid: false };
+  }
+  
+  return { valid: true, userId: data.user_id, userType: data.user_type };
+}
+
+// Revoke all sessions for a user
+async function revokeUserSessions(
+  supabase: any,
+  userId: string,
+  userType: 'admin' | 'school'
+): Promise<void> {
+  await supabase
+    .from('session_tokens')
+    .update({ is_revoked: true })
+    .eq('user_id', userId)
+    .eq('user_type', userType);
 }
 
 Deno.serve(async (req) => {
@@ -124,22 +206,20 @@ Deno.serve(async (req) => {
   }
 
   try {
-    const { action, userType, identifier, password, schoolData, adminCredentials } = await req.json();
+    const { action, userType, identifier, password, newPassword, schoolData, adminCredentials, sessionToken } = await req.json();
 
     const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
     const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
     
-    // Use service role for all operations (bypasses RLS)
     const supabase = createClient(supabaseUrl, serviceRoleKey);
 
-    // Get client IP for rate limiting
     const clientIp = req.headers.get('x-forwarded-for')?.split(',')[0]?.trim() || 
                      req.headers.get('cf-connecting-ip') || 
                      'unknown';
+    const userAgent = req.headers.get('user-agent') || 'unknown';
     const rateLimitKey = `${userType}:${identifier || clientIp}`;
 
     if (action === "login") {
-      // Check rate limit
       const rateCheck = checkRateLimit(rateLimitKey);
       if (!rateCheck.allowed) {
         return new Response(
@@ -159,16 +239,7 @@ Deno.serve(async (req) => {
           .eq("admin_id", identifier)
           .maybeSingle();
 
-        if (error) {
-          console.error("Admin lookup error:", error);
-          recordAttempt(rateLimitKey, false);
-          return new Response(
-            JSON.stringify({ error: "Authentication failed" }),
-            { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-          );
-        }
-
-        if (!admin) {
+        if (error || !admin) {
           recordAttempt(rateLimitKey, false);
           return new Response(
             JSON.stringify({ error: "Invalid credentials" }),
@@ -176,11 +247,9 @@ Deno.serve(async (req) => {
           );
         }
 
-        // Verify password (check both hashed and legacy plain text)
-        const isValidHash = await verifyPassword(password, admin.password_hash);
-        const isLegacyPlainText = secureCompare(password, admin.password_hash);
+        const passwordResult = await verifyPassword(password, admin.password_hash);
         
-        if (!isValidHash && !isLegacyPlainText) {
+        if (!passwordResult.valid) {
           recordAttempt(rateLimitKey, false);
           return new Response(
             JSON.stringify({ error: "Invalid credentials" }),
@@ -188,13 +257,22 @@ Deno.serve(async (req) => {
           );
         }
 
-        // Successful login - clear rate limit
         recordAttempt(rateLimitKey, true);
 
-        // Generate session token
-        const sessionToken = crypto.randomUUID();
+        // Check if password reset is required (legacy password)
+        const requiresPasswordReset = passwordResult.isLegacy || admin.password_reset_required;
 
-        // Log the successful login attempt
+        // If legacy password, upgrade it now
+        if (passwordResult.isLegacy && !requiresPasswordReset) {
+          const newHash = await hashPassword(password);
+          await supabase
+            .from("admins")
+            .update({ password_hash: newHash, password_updated_at: new Date().toISOString() })
+            .eq("id", admin.id);
+        }
+
+        const token = await createSessionToken(supabase, admin.id, 'admin', clientIp, userAgent);
+
         await supabase.from("login_attempts").insert({
           identifier: identifier,
           attempt_type: "admin",
@@ -211,7 +289,8 @@ Deno.serve(async (req) => {
               role: admin.role,
               adminId: admin.admin_id
             },
-            sessionToken
+            sessionToken: token,
+            requiresPasswordReset: requiresPasswordReset
           }),
           { headers: { ...corsHeaders, "Content-Type": "application/json" } }
         );
@@ -223,16 +302,7 @@ Deno.serve(async (req) => {
           .eq("school_id", identifier)
           .maybeSingle();
 
-        if (error) {
-          console.error("School lookup error:", error);
-          recordAttempt(rateLimitKey, false);
-          return new Response(
-            JSON.stringify({ error: "Authentication failed" }),
-            { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-          );
-        }
-
-        if (!school) {
+        if (error || !school) {
           recordAttempt(rateLimitKey, false);
           return new Response(
             JSON.stringify({ error: "Invalid credentials" }),
@@ -240,7 +310,6 @@ Deno.serve(async (req) => {
           );
         }
 
-        // Check if banned
         if (school.is_banned) {
           return new Response(
             JSON.stringify({ error: "This school account has been suspended" }),
@@ -248,11 +317,9 @@ Deno.serve(async (req) => {
           );
         }
 
-        // Verify password (check both hashed and legacy plain text)
-        const isValidHash = await verifyPassword(password, school.password_hash);
-        const isLegacyPlainText = secureCompare(password, school.password_hash);
+        const passwordResult = await verifyPassword(password, school.password_hash);
         
-        if (!isValidHash && !isLegacyPlainText) {
+        if (!passwordResult.valid) {
           recordAttempt(rateLimitKey, false);
           return new Response(
             JSON.stringify({ error: "Invalid credentials" }),
@@ -261,7 +328,20 @@ Deno.serve(async (req) => {
         }
 
         recordAttempt(rateLimitKey, true);
-        const sessionToken = crypto.randomUUID();
+
+        // Check if password reset is required
+        const requiresPasswordReset = passwordResult.isLegacy || school.password_reset_required;
+
+        // If legacy password and not forcing reset, upgrade silently
+        if (passwordResult.isLegacy && !requiresPasswordReset) {
+          const newHash = await hashPassword(password);
+          await supabase
+            .from("schools")
+            .update({ password_hash: newHash, password_updated_at: new Date().toISOString() })
+            .eq("id", school.id);
+        }
+
+        const token = await createSessionToken(supabase, school.id, 'school', clientIp, userAgent);
 
         await supabase.from("login_attempts").insert({
           identifier: identifier,
@@ -279,7 +359,8 @@ Deno.serve(async (req) => {
               name: school.name,
               feePaid: school.fee_paid
             },
-            sessionToken
+            sessionToken: token,
+            requiresPasswordReset: requiresPasswordReset
           }),
           { headers: { ...corsHeaders, "Content-Type": "application/json" } }
         );
@@ -290,34 +371,100 @@ Deno.serve(async (req) => {
         { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
 
+    } else if (action === "reset_password") {
+      // Reset password for admin or school
+      if (!sessionToken || !newPassword) {
+        return new Response(
+          JSON.stringify({ error: "Session token and new password required" }),
+          { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+
+      if (newPassword.length < 8) {
+        return new Response(
+          JSON.stringify({ error: "Password must be at least 8 characters" }),
+          { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+
+      const validation = await validateSessionToken(supabase, sessionToken);
+      if (!validation.valid || !validation.userId || !validation.userType) {
+        return new Response(
+          JSON.stringify({ error: "Invalid or expired session" }),
+          { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+
+      const newHash = await hashPassword(newPassword);
+      const table = validation.userType === 'admin' ? 'admins' : 'schools';
+
+      await supabase
+        .from(table)
+        .update({ 
+          password_hash: newHash, 
+          password_reset_required: false,
+          password_updated_at: new Date().toISOString()
+        })
+        .eq("id", validation.userId);
+
+      // Revoke all old sessions and create a new one
+      await revokeUserSessions(supabase, validation.userId, validation.userType as 'admin' | 'school');
+      const newToken = await createSessionToken(supabase, validation.userId, validation.userType as 'admin' | 'school', clientIp, userAgent);
+
+      return new Response(
+        JSON.stringify({ success: true, sessionToken: newToken }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+
+    } else if (action === "validate_session") {
+      // Validate a session token
+      if (!sessionToken) {
+        return new Response(
+          JSON.stringify({ valid: false }),
+          { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+
+      const validation = await validateSessionToken(supabase, sessionToken, userType);
+      return new Response(
+        JSON.stringify({ valid: validation.valid, userId: validation.userId, userType: validation.userType }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+
+    } else if (action === "logout") {
+      // Revoke the session token
+      if (sessionToken) {
+        await supabase
+          .from('session_tokens')
+          .update({ is_revoked: true })
+          .eq('token', sessionToken);
+      }
+
+      return new Response(
+        JSON.stringify({ success: true }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+
     } else if (action === "create_school") {
-      // Verify admin credentials first
-      if (!adminCredentials?.adminId || !adminCredentials?.sessionToken) {
+      // Verify admin session token
+      if (!adminCredentials?.sessionToken) {
         return new Response(
           JSON.stringify({ error: "Admin authentication required" }),
           { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } }
         );
       }
 
-      // Verify admin exists (session token validation would be more robust in production)
-      const { data: admin } = await supabase
-        .from("admins")
-        .select("id")
-        .eq("id", adminCredentials.adminId)
-        .maybeSingle();
-
-      if (!admin) {
+      const validation = await validateSessionToken(supabase, adminCredentials.sessionToken, 'admin');
+      if (!validation.valid) {
         return new Response(
-          JSON.stringify({ error: "Invalid admin session" }),
+          JSON.stringify({ error: "Invalid or expired admin session" }),
           { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } }
         );
       }
 
-      // Generate secure credentials
       const credentials = generateSecureCredentials();
       const hashedPassword = await hashPassword(credentials.password);
 
-      // Create school with hashed password
       const { data: newSchool, error } = await supabase
         .from("schools")
         .insert({
@@ -328,6 +475,7 @@ Deno.serve(async (req) => {
           state: schoolData.state || null,
           email: schoolData.email || null,
           contact_whatsapp: schoolData.contact_whatsapp || null,
+          password_updated_at: new Date().toISOString()
         })
         .select()
         .single();
@@ -346,30 +494,24 @@ Deno.serve(async (req) => {
           school: newSchool,
           credentials: {
             id: credentials.id,
-            password: credentials.password // Return plain password only once for admin to share
+            password: credentials.password
           }
         }),
         { headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
 
     } else if (action === "update_school") {
-      // Verify admin credentials
-      if (!adminCredentials?.adminId || !adminCredentials?.sessionToken) {
+      if (!adminCredentials?.sessionToken) {
         return new Response(
           JSON.stringify({ error: "Admin authentication required" }),
           { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } }
         );
       }
 
-      const { data: admin } = await supabase
-        .from("admins")
-        .select("id")
-        .eq("id", adminCredentials.adminId)
-        .maybeSingle();
-
-      if (!admin) {
+      const validation = await validateSessionToken(supabase, adminCredentials.sessionToken, 'admin');
+      if (!validation.valid) {
         return new Response(
-          JSON.stringify({ error: "Invalid admin session" }),
+          JSON.stringify({ error: "Invalid or expired admin session" }),
           { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } }
         );
       }
@@ -395,23 +537,17 @@ Deno.serve(async (req) => {
       );
 
     } else if (action === "delete_school") {
-      // Verify admin credentials
-      if (!adminCredentials?.adminId || !adminCredentials?.sessionToken) {
+      if (!adminCredentials?.sessionToken) {
         return new Response(
           JSON.stringify({ error: "Admin authentication required" }),
           { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } }
         );
       }
 
-      const { data: admin } = await supabase
-        .from("admins")
-        .select("id")
-        .eq("id", adminCredentials.adminId)
-        .maybeSingle();
-
-      if (!admin) {
+      const validation = await validateSessionToken(supabase, adminCredentials.sessionToken, 'admin');
+      if (!validation.valid) {
         return new Response(
-          JSON.stringify({ error: "Invalid admin session" }),
+          JSON.stringify({ error: "Invalid or expired admin session" }),
           { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } }
         );
       }
@@ -435,12 +571,19 @@ Deno.serve(async (req) => {
       );
 
     } else if (action === "get_students_for_school") {
-      // Get students for a specific school (for school dashboard)
-      const { schoolUuid, sessionToken } = schoolData;
+      const { schoolUuid, sessionToken: schoolSession } = schoolData;
 
-      if (!schoolUuid || !sessionToken) {
+      if (!schoolUuid || !schoolSession) {
         return new Response(
           JSON.stringify({ error: "School authentication required" }),
+          { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+
+      const validation = await validateSessionToken(supabase, schoolSession, 'school');
+      if (!validation.valid || validation.userId !== schoolUuid) {
+        return new Response(
+          JSON.stringify({ error: "Invalid or expired school session" }),
           { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } }
         );
       }
@@ -460,6 +603,46 @@ Deno.serve(async (req) => {
 
       return new Response(
         JSON.stringify({ success: true, students }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+
+    } else if (action === "force_password_reset") {
+      // Admin action to force password reset for a school
+      if (!adminCredentials?.sessionToken) {
+        return new Response(
+          JSON.stringify({ error: "Admin authentication required" }),
+          { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+
+      const validation = await validateSessionToken(supabase, adminCredentials.sessionToken, 'admin');
+      if (!validation.valid) {
+        return new Response(
+          JSON.stringify({ error: "Invalid or expired admin session" }),
+          { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+
+      const { schoolId } = schoolData;
+
+      // Generate new password and force reset
+      const newPassword = generateSecureCredentials().password;
+      const hashedPassword = await hashPassword(newPassword);
+
+      await supabase
+        .from("schools")
+        .update({ 
+          password_hash: hashedPassword, 
+          password_reset_required: true,
+          password_updated_at: new Date().toISOString()
+        })
+        .eq("id", schoolId);
+
+      // Revoke all existing sessions
+      await revokeUserSessions(supabase, schoolId, 'school');
+
+      return new Response(
+        JSON.stringify({ success: true, newPassword }),
         { headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
