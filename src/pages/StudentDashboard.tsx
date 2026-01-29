@@ -339,6 +339,7 @@ const StudentDashboard = () => {
       });
       return;
     }
+    console.log("Starting study session...");
     setIsStudying(true);
     toast({
       title: "Study Session Started! 📚",
@@ -578,12 +579,11 @@ const StudentDashboard = () => {
     return <ChatHistory studentId={studentId} onClose={() => setShowChatHistory(false)} />;
   }
 
+  // ChatGPT-style wide chat interface when studying
   if (isStudying) {
     return (
-      <div className="min-h-screen bg-background p-4">
-        <div className="container mx-auto max-w-4xl">
-          <StudyChat onEndStudy={handleEndStudy} studentId={studentId || undefined} />
-        </div>
+      <div className="h-[100dvh] bg-background flex flex-col">
+        <StudyChat onEndStudy={handleEndStudy} studentId={studentId || undefined} />
       </div>
     );
   }
@@ -635,8 +635,8 @@ const StudentDashboard = () => {
         </div>
       </header>
 
-      {/* Main Content */}
-      <main className="container mx-auto px-3 sm:px-4 py-4 sm:py-8">
+      {/* Main Content - ChatGPT-style wider layout */}
+      <main className="container mx-auto px-3 sm:px-4 py-4 sm:py-8 max-w-6xl">
         {/* Welcome & Start Study */}
         <div className="mb-6 sm:mb-8">
           <div className="edu-card p-4 sm:p-6 md:p-8 text-center bg-gradient-to-br from-primary/10 to-accent/10">
@@ -707,7 +707,7 @@ const StudentDashboard = () => {
 
             {/* Stats Grid - Today View */}
             {analyticsView === "today" && (
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
+              <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
                 <StatCard
                   icon={<CheckCircle className="w-5 h-5" />}
                   label="Today Status"
@@ -737,7 +737,7 @@ const StudentDashboard = () => {
 
             {/* Stats Grid - Week View */}
             {analyticsView === "week" && (
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
+              <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
                 <StatCard
                   icon={<CalendarDays className="w-5 h-5" />}
                   label="Days Studied"

@@ -848,7 +848,7 @@ const StudyChat = ({ onEndStudy, studentId }: StudyChatProps) => {
   const currentQuestion = quizQuestions[currentQuestionIndex];
 
   return (
-    <div className="flex flex-col h-[100dvh] sm:h-[calc(100vh-60px)] bg-gradient-to-b from-background to-muted/20">
+    <div className="flex flex-col h-full w-full bg-gradient-to-b from-background to-muted/20">
       {/* Confetti Celebration */}
       <Confetti trigger={showConfetti} onComplete={() => setShowConfetti(false)} />
       {/* Enhanced ChatGPT-style Header - Mobile Optimized */}

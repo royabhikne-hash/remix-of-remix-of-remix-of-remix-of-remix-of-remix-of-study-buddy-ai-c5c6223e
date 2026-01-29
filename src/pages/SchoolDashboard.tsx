@@ -644,63 +644,65 @@ const SchoolDashboard = () => {
 
   return (
     <div className="min-h-screen bg-background">
-      {/* Header */}
+      {/* Header - Mobile Optimized with Logo */}
       <header className="border-b border-border bg-card sticky top-0 z-10">
-        <div className="container mx-auto px-4 py-3 sm:py-4">
+        <div className="container mx-auto px-3 sm:px-4 py-2.5 sm:py-4">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2 sm:gap-3 min-w-0">
-              <div className="w-8 h-8 sm:w-10 sm:h-10 rounded-xl bg-accent flex items-center justify-center flex-shrink-0">
-                <Building2 className="w-4 h-4 sm:w-6 sm:h-6 text-accent-foreground" />
-              </div>
+              <img 
+                src="/logo.png" 
+                alt="Study Buddy AI" 
+                className="w-8 h-8 sm:w-10 sm:h-10 rounded-xl flex-shrink-0 object-contain"
+              />
               <div className="min-w-0">
                 <span className="font-bold text-sm sm:text-lg truncate block">{schoolName}</span>
-                <p className="text-xs text-muted-foreground hidden sm:block">{t("school.dashboardTitle")}</p>
+                <p className="text-[10px] sm:text-xs text-muted-foreground hidden sm:block">{t("school.dashboardTitle")}</p>
               </div>
             </div>
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-1.5 sm:gap-2">
               <LanguageToggle />
-              <Button variant="ghost" size="icon" onClick={handleLogout}>
-                <LogOut className="w-5 h-5" />
+              <Button variant="ghost" size="icon" onClick={handleLogout} className="h-8 w-8 sm:h-9 sm:w-9">
+                <LogOut className="w-4 h-4 sm:w-5 sm:h-5" />
               </Button>
             </div>
           </div>
         </div>
       </header>
 
-      {/* Main Content */}
-      <main className="container mx-auto px-4 py-4 sm:py-8">
-        {/* Stats */}
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-2 sm:gap-4 mb-6 sm:mb-8">
+      {/* Main Content - Wider layout */}
+      <main className="container mx-auto px-3 sm:px-4 py-4 sm:py-8 max-w-6xl">
+        {/* Stats Grid - Mobile Optimized */}
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-2 sm:gap-4 mb-6 sm:mb-8">
           <div className="edu-card p-3 sm:p-4 text-center">
-            <div className="w-10 h-10 sm:w-12 sm:h-12 rounded-xl bg-primary/10 flex items-center justify-center mx-auto mb-2">
-              <Users className="w-5 h-5 sm:w-6 sm:h-6 text-primary" />
+            <div className="w-9 h-9 sm:w-12 sm:h-12 rounded-xl bg-primary/10 flex items-center justify-center mx-auto mb-2">
+              <Users className="w-4 h-4 sm:w-6 sm:h-6 text-primary" />
             </div>
-            <p className="text-xl sm:text-2xl font-bold">{stats.totalStudents}</p>
-            <p className="text-xs sm:text-sm text-muted-foreground">{t("student.approved")}</p>
+            <p className="text-lg sm:text-2xl font-bold">{stats.totalStudents}</p>
+            <p className="text-[10px] sm:text-sm text-muted-foreground">{t("student.approved")}</p>
           </div>
           <div className="edu-card p-3 sm:p-4 text-center relative">
-            <div className="w-10 h-10 sm:w-12 sm:h-12 rounded-xl bg-warning/10 flex items-center justify-center mx-auto mb-2">
-              <Clock className="w-5 h-5 sm:w-6 sm:h-6 text-warning" />
+            <div className="w-9 h-9 sm:w-12 sm:h-12 rounded-xl bg-warning/10 flex items-center justify-center mx-auto mb-2">
+              <Clock className="w-4 h-4 sm:w-6 sm:h-6 text-warning" />
             </div>
-            <p className="text-xl sm:text-2xl font-bold">{stats.pendingApprovals}</p>
-            <p className="text-xs sm:text-sm text-muted-foreground">{t("student.pending")}</p>
+            <p className="text-lg sm:text-2xl font-bold">{stats.pendingApprovals}</p>
+            <p className="text-[10px] sm:text-sm text-muted-foreground">{t("student.pending")}</p>
             {stats.pendingApprovals > 0 && (
-              <span className="absolute top-2 right-2 w-2 h-2 sm:w-3 sm:h-3 bg-warning rounded-full animate-pulse" />
+              <span className="absolute top-2 right-2 w-2 h-2 bg-warning rounded-full animate-pulse" />
             )}
           </div>
           <div className="edu-card p-3 sm:p-4 text-center">
-            <div className="w-10 h-10 sm:w-12 sm:h-12 rounded-xl bg-accent/10 flex items-center justify-center mx-auto mb-2">
-              <BookOpen className="w-5 h-5 sm:w-6 sm:h-6 text-accent" />
+            <div className="w-9 h-9 sm:w-12 sm:h-12 rounded-xl bg-accent/10 flex items-center justify-center mx-auto mb-2">
+              <BookOpen className="w-4 h-4 sm:w-6 sm:h-6 text-accent" />
             </div>
-            <p className="text-xl sm:text-2xl font-bold">{stats.studiedToday}</p>
-            <p className="text-xs sm:text-sm text-muted-foreground">{t("school.today")}</p>
+            <p className="text-lg sm:text-2xl font-bold">{stats.studiedToday}</p>
+            <p className="text-[10px] sm:text-sm text-muted-foreground">{t("school.today")}</p>
           </div>
           <div className="edu-card p-3 sm:p-4 text-center">
-            <div className="w-10 h-10 sm:w-12 sm:h-12 rounded-xl bg-primary/10 flex items-center justify-center mx-auto mb-2">
-              <TrendingUp className="w-5 h-5 sm:w-6 sm:h-6 text-primary" />
+            <div className="w-9 h-9 sm:w-12 sm:h-12 rounded-xl bg-primary/10 flex items-center justify-center mx-auto mb-2">
+              <TrendingUp className="w-4 h-4 sm:w-6 sm:h-6 text-primary" />
             </div>
-            <p className="text-xl sm:text-2xl font-bold">{stats.improving}</p>
-            <p className="text-xs sm:text-sm text-muted-foreground">{t("school.improving")}</p>
+            <p className="text-lg sm:text-2xl font-bold">{stats.improving}</p>
+            <p className="text-[10px] sm:text-sm text-muted-foreground">{t("school.improving")}</p>
           </div>
         </div>
 
