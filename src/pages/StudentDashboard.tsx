@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
@@ -20,7 +20,6 @@ import {
   Trophy,
 } from "lucide-react";
 import { DashboardSkeleton } from "@/components/DashboardSkeleton";
-import StudyChat from "@/components/StudyChat";
 import ChatHistory from "@/components/ChatHistory";
 import StudentRankingCard from "@/components/StudentRankingCard";
 import { ThemeToggle } from "@/components/ThemeToggle";
@@ -29,21 +28,6 @@ import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/useAuth";
 import { supabase } from "@/integrations/supabase/client";
 import { useLanguage } from "@/contexts/LanguageContext";
-
-interface ChatMessage {
-  id: string;
-  role: "user" | "assistant";
-  content: string;
-  timestamp: Date;
-  imageUrl?: string;
-}
-
-interface RealTimeAnalysis {
-  weakAreas: string[];
-  strongAreas: string[];
-  currentUnderstanding: "weak" | "average" | "good" | "excellent";
-  topicsCovered: string[];
-}
 
 interface RecentSession {
   id: string;
@@ -58,7 +42,6 @@ const StudentDashboard = () => {
   const { toast } = useToast();
   const { user, signOut, loading } = useAuth();
   const { t, language } = useLanguage();
-  const [isStudying, setIsStudying] = useState(false);
   const [showChatHistory, setShowChatHistory] = useState(false);
   const [userName, setUserName] = useState("Student");
   const [studentId, setStudentId] = useState<string | null>(null);
@@ -330,7 +313,13 @@ const StudentDashboard = () => {
     return date.toLocaleDateString();
   };
 
-  const handleStartStudy = () => {
+  const handleStartStudy = useCallback((e?: React.MouseEvent | React.TouchEvent) => {
+    // Prevent default for touch events to avoid double-firing
+    if (e) {
+      e.preventDefault();
+      e.stopPropagation();
+    }
+    
     if (isApproved === false) {
       toast({
         title: "Approval Pending",
@@ -339,137 +328,21 @@ const StudentDashboard = () => {
       });
       return;
     }
-    console.log("Starting study session...");
-    setIsStudying(true);
-    toast({
-      title: "Study Session Started! 📚",
-      description: "Your AI buddy is ready to help.",
-    });
-  };
-
-  const handleEndStudy = async (summary: { 
-    topic: string; 
-    timeSpent: number; 
-    messages: ChatMessage[];
-    analysis: RealTimeAnalysis;
-    sessionId?: string;
-    quizResult?: {
-      correctCount: number;
-      totalQuestions: number;
-      accuracy: number;
-      understanding: "strong" | "partial" | "weak";
-      questions: any[];
-      answers: string[];
-    };
-  }) => {
-    setIsStudying(false);
     
-    // Save session to database if we have a student ID
-    if (studentId) {
-      try {
-        // Map understanding level based on quiz result or analysis
-        let understandingLevel: "weak" | "average" | "good" | "excellent";
-        let improvementScore: number;
-
-        if (summary.quizResult) {
-          // Use actual quiz accuracy as the improvement score
-          improvementScore = summary.quizResult.accuracy;
-          
-          // Map quiz understanding to database enum
-          if (summary.quizResult.understanding === "strong") {
-            understandingLevel = "excellent";
-          } else if (summary.quizResult.understanding === "partial") {
-            understandingLevel = "average";
-          } else {
-            understandingLevel = "weak";
-          }
-        } else {
-          // Fallback to analysis-based score if no quiz
-          const scoreMap = { weak: 40, average: 60, good: 75, excellent: 90 };
-          improvementScore = scoreMap[summary.analysis.currentUnderstanding] || 50;
-          understandingLevel = summary.analysis.currentUnderstanding;
-        }
-
-        const topicToSave = summary.topic || summary.analysis.topicsCovered[0] || "General Study";
-        const aiSummary = summary.quizResult 
-          ? `Studied ${summary.topic} for ${summary.timeSpent} minutes. Quiz: ${summary.quizResult.correctCount}/${summary.quizResult.totalQuestions} correct (${summary.quizResult.accuracy}%). Result: ${summary.quizResult.understanding}.`
-          : `Studied ${summary.topic} for ${summary.timeSpent} minutes. Understanding: ${summary.analysis.currentUnderstanding}. Topics covered: ${summary.analysis.topicsCovered.join(", ") || "General concepts"}.`;
-
-        let finalSessionId = summary.sessionId;
-
-        // If session already exists, UPDATE it instead of creating a new one
-        if (summary.sessionId) {
-          const { error } = await supabase
-            .from("study_sessions")
-            .update({
-              topic: topicToSave,
-              subject: topicToSave !== "General Study" ? topicToSave : null,
-              time_spent: summary.timeSpent,
-              understanding_level: understandingLevel,
-              improvement_score: improvementScore,
-              weak_areas: summary.analysis.weakAreas,
-              strong_areas: summary.analysis.strongAreas,
-              ai_summary: aiSummary,
-              end_time: new Date().toISOString(),
-            })
-            .eq("id", summary.sessionId);
-
-          if (error) {
-            console.error("Error updating session:", error);
-          }
-        } else {
-          // Create new session only if one doesn't exist
-          const { data: sessionData, error } = await supabase.from("study_sessions").insert({
-            student_id: studentId,
-            topic: topicToSave,
-            subject: topicToSave !== "General Study" ? topicToSave : null,
-            time_spent: summary.timeSpent,
-            understanding_level: understandingLevel,
-            improvement_score: improvementScore,
-            weak_areas: summary.analysis.weakAreas,
-            strong_areas: summary.analysis.strongAreas,
-            ai_summary: aiSummary,
-          }).select().single();
-
-          if (error) {
-            console.error("Error saving session:", error);
-          } else {
-            finalSessionId = sessionData?.id;
-          }
-        }
-
-        // Save quiz attempt if quiz was taken
-        if (summary.quizResult && finalSessionId) {
-          const { error: quizError } = await supabase.from("quiz_attempts").insert({
-            student_id: studentId,
-            session_id: finalSessionId,
-            questions: summary.quizResult.questions,
-            answers: summary.quizResult.answers,
-            correct_count: summary.quizResult.correctCount,
-            total_questions: summary.quizResult.totalQuestions,
-            accuracy_percentage: summary.quizResult.accuracy,
-            understanding_result: summary.quizResult.understanding,
-          });
-          
-          if (quizError) {
-            console.error("Error saving quiz attempt:", quizError);
-          }
-        }
-        
-        // Refresh data
-        loadStudentData();
-      } catch (err) {
-        console.error("Error saving session:", err);
-      }
+    console.log("Navigating to study page...");
+    
+    // Use router navigation for WebView/PWA compatibility
+    // This avoids window.open, popups, or external redirects
+    try {
+      navigate("/study");
+    } catch (err) {
+      console.error("Navigation error, using fallback:", err);
+      // Fallback: force location change via router
+      window.location.href = "/study";
     }
+  }, [isApproved, toast, navigate]);
 
-    toast({
-      title: "Study Session Complete! 🎉",
-      description: summary.quizResult 
-        ? `Quiz: ${summary.quizResult.correctCount}/${summary.quizResult.totalQuestions} correct (${summary.quizResult.accuracy}%)`
-        : `You studied ${summary.topic} for ${summary.timeSpent} minutes.`,
-    });
-  };
+  // handleEndStudy is now in StudyPage.tsx - study sessions are handled via route navigation
 
   const handleSendReport = async () => {
     if (!studentId || !parentWhatsapp) {
@@ -579,14 +452,7 @@ const StudentDashboard = () => {
     return <ChatHistory studentId={studentId} onClose={() => setShowChatHistory(false)} />;
   }
 
-  // ChatGPT-style wide chat interface when studying
-  if (isStudying) {
-    return (
-      <div className="h-[100dvh] bg-background flex flex-col">
-        <StudyChat onEndStudy={handleEndStudy} studentId={studentId || undefined} />
-      </div>
-    );
-  }
+  // Study sessions now use route navigation (/study) for WebView/PWA compatibility
 
   return (
     <div className="min-h-screen bg-background">
@@ -649,7 +515,13 @@ const StudentDashboard = () => {
                 : (language === 'en' ? "What do you want to study today? Let's start!" : "Aaj kya padhna hai? Chal start karte hain!")}
             </p>
             <div className="flex flex-wrap justify-center gap-2 sm:gap-3">
-              <Button variant="hero" size="lg" className="text-sm sm:text-base" onClick={handleStartStudy}>
+              <Button 
+                variant="hero" 
+                size="lg" 
+                className="text-sm sm:text-base touch-manipulation"
+                onClick={handleStartStudy}
+                onTouchStart={handleStartStudy}
+              >
                 <Play className="w-4 h-4 sm:w-5 sm:h-5" />
                 {language === 'en' ? 'Start Studying' : 'Padhai Shuru Karo'}
               </Button>
