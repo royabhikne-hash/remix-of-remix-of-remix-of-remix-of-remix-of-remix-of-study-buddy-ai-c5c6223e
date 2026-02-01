@@ -10,6 +10,7 @@ import SoundWave from "@/components/SoundWave";
 import VoiceInputIndicator from "@/components/VoiceInputIndicator";
 import Confetti from "@/components/Confetti";
 import TypingText from "@/components/TypingText";
+import { useNativeTTS } from "@/hooks/useNativeTTS";
 
 // Web Speech API types
 interface SpeechRecognitionEvent extends Event {
@@ -119,11 +120,11 @@ const StudyChat = ({ onEndStudy, studentId }: StudyChatProps) => {
   const [currentTopic, setCurrentTopic] = useState("");
   const [showAnalysis, setShowAnalysis] = useState(false);
   const [speakingMessageId, setSpeakingMessageId] = useState<string | null>(null);
-  const [voiceSpeed, setVoiceSpeed] = useState(1.0);
+  const [voiceSpeed, setVoiceSpeed] = useState(0.9);
   const [autoSpeak, setAutoSpeak] = useState(true); // Auto-speak enabled by default
 
-  // WebView-safe: some Android WebViews/APK wrappers don't support TTS at all.
-  const [ttsSupported, setTtsSupported] = useState(false);
+  // Native TTS hook - works in Capacitor apps and falls back to Web Speech API
+  const { speak: nativeSpeak, stop: stopNativeTTS, isSupported: ttsSupported, isSpeaking, isNative: isNativeTTS } = useNativeTTS();
   const ttsWarnedRef = useRef(false);
   
   // Quiz mode state
@@ -161,48 +162,6 @@ const StudyChat = ({ onEndStudy, studentId }: StudyChatProps) => {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // Detect TTS support with robust WebView check
-  useEffect(() => {
-    const checkTTSSupport = async () => {
-      try {
-        // Basic API check
-        if (typeof window === "undefined" || 
-            typeof window.speechSynthesis === "undefined" ||
-            typeof SpeechSynthesisUtterance === "undefined") {
-          console.log("TTS: Basic API not available");
-          setTtsSupported(false);
-          setAutoSpeak(false);
-          return;
-        }
-
-        // Test if TTS actually works (some WebViews have the API but it doesn't function)
-        const testUtterance = new SpeechSynthesisUtterance("");
-        testUtterance.volume = 0; // Silent test
-        
-        // Wait for voices to load (required on some devices)
-        const voices = window.speechSynthesis.getVoices();
-        if (voices.length === 0) {
-          // Voices may load async, wait a bit
-          await new Promise(resolve => setTimeout(resolve, 500));
-          const voicesRetry = window.speechSynthesis.getVoices();
-          if (voicesRetry.length === 0) {
-            console.log("TTS: No voices available");
-            // Still mark as supported - some devices load voices later
-          }
-        }
-
-        setTtsSupported(true);
-        console.log("TTS: Supported and ready");
-      } catch (err) {
-        console.warn("TTS check failed:", err);
-        setTtsSupported(false);
-        setAutoSpeak(false);
-      }
-    };
-
-    checkTTSSupport();
-  }, []);
-
   // Auto-speak welcome greeting when chatbot first opens
   useEffect(() => {
     if (!ttsSupported) return;
@@ -215,34 +174,10 @@ const StudyChat = ({ onEndStudy, studentId }: StudyChatProps) => {
     }
   }, [hasPlayedWelcome, autoSpeak, messages, ttsSupported]);
 
-  // Load voices when available
+  // Log TTS status
   useEffect(() => {
-    if (!ttsSupported) return;
-
-    const loadVoices = () => {
-      try {
-        const voices = window.speechSynthesis.getVoices();
-        console.log('Available voices:', voices.map(v => `${v.name} (${v.lang})`));
-      } catch (err) {
-        console.warn("TTS voices load failed:", err);
-      }
-    };
-    
-    try {
-      loadVoices();
-      window.speechSynthesis.onvoiceschanged = loadVoices;
-    } catch (err) {
-      console.warn("TTS setup failed:", err);
-    }
-    
-    return () => {
-      try {
-        window.speechSynthesis.onvoiceschanged = null;
-      } catch {
-        // ignore
-      }
-    };
-  }, [ttsSupported]);
+    console.log(`TTS Status: Supported=${ttsSupported}, Native=${isNativeTTS}`);
+  }, [ttsSupported, isNativeTTS]);
 
   // Check for speech recognition support
   useEffect(() => {
@@ -290,7 +225,7 @@ const StudyChat = ({ onEndStudy, studentId }: StudyChatProps) => {
     }
   }, [toast]);
 
-  const toggleListening = useCallback(() => {
+  const toggleListening = useCallback(async () => {
     if (!recognitionRef.current) {
       toast({
         title: "Not Supported",
@@ -306,11 +241,7 @@ const StudyChat = ({ onEndStudy, studentId }: StudyChatProps) => {
     } else {
       // Stop any ongoing speech first
       if (ttsSupported) {
-        try {
-          window.speechSynthesis.cancel();
-        } catch {
-          // ignore
-        }
+        await stopNativeTTS();
       }
       setSpeakingMessageId(null);
       
@@ -332,7 +263,7 @@ const StudyChat = ({ onEndStudy, studentId }: StudyChatProps) => {
         });
       }
     }
-  }, [isListening, toast]);
+  }, [isListening, toast, ttsSupported, stopNativeTTS]);
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -379,8 +310,8 @@ const StudyChat = ({ onEndStudy, studentId }: StudyChatProps) => {
     });
   };
 
-  // Enhanced Web Speech API for natural Hindi voice with better quality and WebView compatibility
-  const speakText = useCallback((text: string, messageId: string, isQuizQuestion: boolean = false) => {
+  // Unified TTS function using native TTS hook (works in Capacitor and Web)
+  const speakText = useCallback(async (text: string, messageId: string, isQuizQuestion: boolean = false) => {
     if (!ttsSupported) {
       if (!ttsWarnedRef.current) {
         ttsWarnedRef.current = true;
@@ -394,137 +325,33 @@ const StudyChat = ({ onEndStudy, studentId }: StudyChatProps) => {
 
     // If already speaking this message, stop
     if (speakingMessageId === messageId) {
-      try {
-        window.speechSynthesis.cancel();
-      } catch {
-        // ignore
-      }
+      await stopNativeTTS();
       setSpeakingMessageId(null);
       return;
     }
 
     // Stop any ongoing speech
-    try {
-      window.speechSynthesis.cancel();
-    } catch {
-      // ignore
-    }
-
-    // Clean text and handle Hinglish better
-    let cleanText = text
-      .replace(/[🎉📚💪🤖👋✓✔❌⚠️🙏👍💡🎯📊📈📉🔥⭐🎓📖💯✨🏆😊🙂😄]/g, '')
-      .replace(/\*\*/g, '') // Remove markdown bold
-      .replace(/\*/g, '')   // Remove asterisks
-      .replace(/_/g, '')    // Remove underscores
-      .replace(/#{1,6}\s/g, '') // Remove markdown headers
-      .replace(/\n+/g, '. ') // Replace newlines with pauses
-      .trim();
-    
-    if (!cleanText) return;
+    await stopNativeTTS();
     
     setSpeakingMessageId(messageId);
     
-    const speak = () => {
-      try {
-        const utterance = new SpeechSynthesisUtterance(cleanText);
-        
-        // Get available voices
-        let voices: SpeechSynthesisVoice[] = [];
-        try {
-          voices = window.speechSynthesis.getVoices();
-        } catch (err) {
-          console.warn("TTS getVoices failed:", err);
-        }
-        
-        // Priority order for voice selection - PREFER MALE VOICES
-        const preferredVoice = 
-          // Hindi male voices (highest priority)
-          voices.find(v => v.lang === 'hi-IN' && v.name.toLowerCase().includes('male')) ||
-          voices.find(v => v.lang === 'hi-IN' && (v.name.includes('Madhur') || v.name.includes('Hemant') || v.name.includes('Prabhat'))) ||
-          voices.find(v => v.lang === 'hi-IN' && v.name.includes('Google') && !v.name.toLowerCase().includes('female')) ||
-          voices.find(v => v.lang === 'hi-IN' && v.name.includes('Microsoft') && !v.name.toLowerCase().includes('female')) ||
-          // Hindi voices that are NOT female
-          voices.find(v => v.lang === 'hi-IN' && !v.name.toLowerCase().includes('female') && !v.name.toLowerCase().includes('woman')) ||
-          // English Indian male voices
-          voices.find(v => v.lang === 'en-IN' && v.name.toLowerCase().includes('male')) ||
-          voices.find(v => v.lang === 'en-IN' && (v.name.includes('Ravi') || v.name.includes('Google') && !v.name.toLowerCase().includes('female'))) ||
-          // Any Hindi voice
-          voices.find(v => v.lang.includes('hi')) ||
-          voices.find(v => v.lang.includes('en-IN')) ||
-          // Fallback to any available voice
-          voices[0];
-        
-        if (preferredVoice) {
-          utterance.voice = preferredVoice;
-          utterance.lang = preferredVoice.lang;
-          console.log('Using voice:', preferredVoice.name, preferredVoice.lang);
-        } else {
-          // Fallback language
-          utterance.lang = 'hi-IN';
-        }
-        
-        // Adjust rate based on context - slower for quiz questions for better clarity
-        utterance.rate = isQuizQuestion ? Math.max(voiceSpeed - 0.1, 0.7) : voiceSpeed;
-        utterance.pitch = 1.0;
-        utterance.volume = 1.0;
-
-        utterance.onend = () => {
-          setSpeakingMessageId(null);
-        };
-
-        utterance.onerror = (e) => {
-          console.error("TTS error event:", e);
-          setSpeakingMessageId(null);
-          
-          // If error occurs, try again with simpler text (some WebViews fail on long text)
-          if (cleanText.length > 200) {
-            const shortText = cleanText.substring(0, 200) + "...";
-            const shortUtterance = new SpeechSynthesisUtterance(shortText);
-            shortUtterance.lang = utterance.lang;
-            shortUtterance.rate = utterance.rate;
-            if (preferredVoice) shortUtterance.voice = preferredVoice;
-            shortUtterance.onend = () => setSpeakingMessageId(null);
-            shortUtterance.onerror = () => setSpeakingMessageId(null);
-            try {
-              window.speechSynthesis.speak(shortUtterance);
-              setSpeakingMessageId(messageId);
-            } catch {
-              setSpeakingMessageId(null);
-            }
-          }
-        };
-
-        // Chrome/WebView bug fix: resume if paused
-        if (window.speechSynthesis.paused) {
-          window.speechSynthesis.resume();
-        }
-
-        window.speechSynthesis.speak(utterance);
-        
-        // Chrome bug: speech stops after 15 seconds, need to keep-alive
-        const keepAlive = setInterval(() => {
-          if (!window.speechSynthesis.speaking) {
-            clearInterval(keepAlive);
-            return;
-          }
-          window.speechSynthesis.pause();
-          window.speechSynthesis.resume();
-        }, 10000);
-
-        utterance.onend = () => {
-          clearInterval(keepAlive);
-          setSpeakingMessageId(null);
-        };
-
-      } catch (error) {
-        console.error("TTS error:", error);
-        setSpeakingMessageId(null);
-      }
-    };
-
-    // Small delay for better audio quality and to ensure voices are loaded
-    setTimeout(speak, 100);
-  }, [ttsSupported, speakingMessageId, voiceSpeed, toast]);
+    try {
+      // Use native TTS hook which handles both Capacitor and Web Speech API
+      await nativeSpeak({
+        text,
+        lang: 'hi-IN',
+        rate: isQuizQuestion ? Math.max(voiceSpeed - 0.1, 0.7) : voiceSpeed,
+        pitch: 1.0,
+        volume: 1.0,
+      });
+      
+      console.log(`TTS: Spoke message ${messageId} (Native: ${isNativeTTS})`);
+    } catch (error) {
+      console.error("TTS error:", error);
+    } finally {
+      setSpeakingMessageId(null);
+    }
+  }, [ttsSupported, speakingMessageId, voiceSpeed, toast, nativeSpeak, stopNativeTTS, isNativeTTS]);
 
   // Function to speak quiz question with correct numbering
   const speakQuizQuestion = useCallback((question: QuizQuestion, questionNumber?: number) => {
