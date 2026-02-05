@@ -124,6 +124,53 @@ export type Database = {
         }
         Relationships: []
       }
+      chapter_progress: {
+        Row: {
+          board: string
+          chapter: string
+          class: string
+          completed_at: string | null
+          created_at: string
+          id: string
+          is_completed: boolean
+          student_id: string
+          subject: string
+          updated_at: string
+        }
+        Insert: {
+          board: string
+          chapter: string
+          class: string
+          completed_at?: string | null
+          created_at?: string
+          id?: string
+          is_completed?: boolean
+          student_id: string
+          subject: string
+          updated_at?: string
+        }
+        Update: {
+          board?: string
+          chapter?: string
+          class?: string
+          completed_at?: string | null
+          created_at?: string
+          id?: string
+          is_completed?: boolean
+          student_id?: string
+          subject?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "chapter_progress_student_id_fkey"
+            columns: ["student_id"]
+            isOneToOne: false
+            referencedRelation: "students"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       chat_messages: {
         Row: {
           content: string
