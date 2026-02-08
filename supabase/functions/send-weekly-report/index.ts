@@ -112,37 +112,128 @@ const sendWhatsAppMessage = async (to: string, message: string): Promise<boolean
   }
 };
 
-const generateWhatsAppMessage = (report: DetailedReport): string => {
+type ReportLanguage = "en" | "hi";
+
+interface WhatsAppTranslations {
+  weeklyReport: string;
+  grade: string;
+  trend: string;
+  thisWeek: string;
+  sessions: string;
+  studyTime: string;
+  quizAccuracy: string;
+  daysStudied: string;
+  streak: string;
+  strong: string;
+  focus: string;
+  tips: string;
+  improving: string;
+  declining: string;
+  stable: string;
+  signature: string;
+}
+
+const whatsAppTranslations: Record<ReportLanguage, WhatsAppTranslations> = {
+  hi: {
+    weeklyReport: "साप्ताहिक रिपोर्ट",
+    grade: "ग्रेड",
+    trend: "रुझान",
+    thisWeek: "इस हफ्ते",
+    sessions: "सेशन",
+    studyTime: "पढ़ाई का समय",
+    quizAccuracy: "क्विज़ सटीकता",
+    daysStudied: "दिन पढ़ाई की",
+    streak: "स्ट्रीक",
+    strong: "मजबूत",
+    focus: "ध्यान दें",
+    tips: "सुझाव",
+    improving: "सुधार हो रहा है",
+    declining: "गिरावट",
+    stable: "स्थिर",
+    signature: "Study Buddy AI",
+  },
+  en: {
+    weeklyReport: "Weekly Report",
+    grade: "Grade",
+    trend: "Trend",
+    thisWeek: "This Week",
+    sessions: "Sessions",
+    studyTime: "Study Time",
+    quizAccuracy: "Quiz Accuracy",
+    daysStudied: "Days Studied",
+    streak: "Streak",
+    strong: "Strong",
+    focus: "Focus",
+    tips: "Tips",
+    improving: "Improving",
+    declining: "Declining",
+    stable: "Stable",
+    signature: "Study Buddy AI",
+  },
+};
+
+const generateWhatsAppMessage = (report: DetailedReport, language: ReportLanguage = "hi"): string => {
+  const t = whatsAppTranslations[language];
   const trendEmoji = report.trend === "improving" ? "📈" : report.trend === "declining" ? "📉" : "➡️";
+  const trendText = report.trend === "improving" ? t.improving : report.trend === "declining" ? t.declining : t.stable;
   
-  let message = `🎓 *${report.studentName} - Weekly Report*
-━━━━━━━━━━━━━━━━━━━━
-🏫 ${report.schoolName} | 📚 ${report.studentClass}
+  const hours = Math.floor(report.totalMinutes / 60);
+  const mins = report.totalMinutes % 60;
+  const timeFormatted = hours > 0 ? `${hours}h ${mins}m` : `${mins}m`;
 
-🏆 *Grade: ${report.grade}* (${report.gradeLabel})
-${trendEmoji} Trend: ${report.trend}
+  let message = `🎓 *${report.studentName} - ${t.weeklyReport}*
+━━━━━━━━━━━━━━━━━━━━━━━━
+🏫 ${report.schoolName}
+📚 ${report.studentClass}
 
-📊 *This Week:*
-• Sessions: ${report.totalSessions}
-• Study Time: ${Math.floor(report.totalMinutes / 60)}h ${report.totalMinutes % 60}m
-• Quiz Accuracy: ${report.avgAccuracy}%
-• Days Studied: ${report.daysStudied}/7
-• Streak: ${report.currentStreak} days 🔥`;
+🏆 *${t.grade}: ${report.grade}* (${report.gradeLabel})
+${trendEmoji} ${t.trend}: ${trendText}
+
+📊 *${t.thisWeek}:*
+┌─────────────────────────
+│ 📖 ${t.sessions}: *${report.totalSessions}*
+│ ⏱️ ${t.studyTime}: *${timeFormatted}*
+│ 🎯 ${t.quizAccuracy}: *${report.avgAccuracy}%*
+│ 📅 ${t.daysStudied}: *${report.daysStudied}/7*
+│ 🔥 ${t.streak}: *${report.currentStreak} days*
+└─────────────────────────`;
 
   if (report.strongAreas.length > 0) {
-    message += `\n\n✅ *Strong:* ${report.strongAreas.slice(0, 3).join(', ')}`;
+    message += `\n\n✅ *${t.strong}:*\n${report.strongAreas.slice(0, 3).map(a => `   • ${a}`).join('\n')}`;
   }
   
   if (report.weakAreas.length > 0) {
-    message += `\n⚠️ *Focus:* ${report.weakAreas.slice(0, 3).join(', ')}`;
+    message += `\n\n⚠️ *${t.focus}:*\n${report.weakAreas.slice(0, 3).map(a => `   • ${a}`).join('\n')}`;
   }
 
   if (report.recommendations.length > 0) {
-    message += `\n\n💡 *Tips:*\n${report.recommendations.slice(0, 3).map(r => `• ${r}`).join('\n')}`;
+    message += `\n\n💡 *${t.tips}:*\n${report.recommendations.slice(0, 3).map(r => `   ${r}`).join('\n')}`;
   }
 
-  message += `\n\n━━━━━━━━━━━━━━━━━━━━
-📱 Study Buddy AI`;
+  // Subject-wise summary
+  if (report.subjectsStudied.length > 0) {
+    const subjectEmojis: Record<string, string> = {
+      "Mathematics": "🔢",
+      "Science": "🔬",
+      "Hindi": "📕",
+      "English": "📗",
+      "Social Science": "🌍",
+      "Physics": "⚛️",
+      "Chemistry": "🧪",
+      "Biology": "🧬",
+    };
+    
+    const subjectList = report.subjectsStudied.slice(0, 4).map(s => {
+      const emoji = subjectEmojis[s] || "📚";
+      return `${emoji} ${s}`;
+    }).join(" | ");
+    
+    message += `\n\n📚 ${language === "hi" ? "विषय पढ़े" : "Subjects"}: ${subjectList}`;
+  }
+
+  message += `\n\n━━━━━━━━━━━━━━━━━━━━━━━━
+📱 *${t.signature}*
+🌟 ${language === "hi" ? "पढ़ाई में मदद करने वाला AI साथी" : "Your AI Study Companion"}`;
 
   return message;
 };
@@ -157,7 +248,7 @@ serve(async (req) => {
     const supabaseKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
     const supabase = createClient(supabaseUrl, supabaseKey);
 
-    let body: { studentId?: string; sendWhatsApp?: boolean; previewOnly?: boolean } = {};
+    let body: { studentId?: string; sendWhatsApp?: boolean; previewOnly?: boolean; language?: ReportLanguage } = {};
     try {
       body = await req.json();
     } catch {
@@ -354,7 +445,8 @@ serve(async (req) => {
       
       // Send WhatsApp if requested
       if (body.sendWhatsApp && !body.previewOnly) {
-        const message = generateWhatsAppMessage(report);
+        const language = body.language || "hi";
+        const message = generateWhatsAppMessage(report, language);
         const sent = await sendWhatsAppMessage(student.parent_whatsapp, message);
         reports[reports.length - 1].sent = sent;
         console.log(`WhatsApp for ${student.full_name}: ${sent ? 'sent' : 'failed'}`);
