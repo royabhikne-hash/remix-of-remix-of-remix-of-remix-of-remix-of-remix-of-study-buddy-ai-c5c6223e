@@ -1,1 +1,4 @@
 project_id = "lakhyznbqudncuhpmvzx"
+
+[functions.text-to-speech]
+verify_jwt = false

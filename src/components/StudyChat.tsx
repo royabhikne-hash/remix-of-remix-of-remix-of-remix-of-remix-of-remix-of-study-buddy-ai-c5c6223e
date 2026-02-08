@@ -10,10 +10,10 @@ import SoundWave from "@/components/SoundWave";
 import VoiceInputIndicator from "@/components/VoiceInputIndicator";
 import Confetti from "@/components/Confetti";
 import TypingText from "@/components/TypingText";
-import { useNativeTTS } from "@/hooks/useNativeTTS";
-import VoiceSelector from "@/components/VoiceSelector";
+import { useSpeechifyTTS } from "@/hooks/useSpeechifyTTS";
+import SpeechifyVoiceSelector from "@/components/SpeechifyVoiceSelector";
 import SubjectChapterSelector from "@/components/SubjectChapterSelector";
- import { BoardType } from "@/data/syllabusData";
+import { BoardType } from "@/data/syllabusData";
 
 // Web Speech API types
 interface SpeechRecognitionEvent extends Event {
@@ -134,16 +134,18 @@ const StudyChat = ({ onEndStudy, studentId, studentClass = "10", studentBoard = 
   const [voiceSpeed, setVoiceSpeed] = useState(0.9);
   const [autoSpeak, setAutoSpeak] = useState(true); // Auto-speak enabled by default
 
-  // Simple Web TTS hook with voice selection
+  // Speechify TTS hook - server-side for cross-platform consistency
   const { 
-    speak: nativeSpeak, 
-    stop: stopNativeTTS, 
+    speak: speechifySpeak, 
+    stop: stopTTS, 
     isSupported: ttsSupported, 
     isSpeaking,
-    getHindiVoices,
-    selectedVoiceName,
-    setSelectedVoiceName
-  } = useNativeTTS();
+    isLoading: ttsLoading,
+    currentVoiceId,
+    setVoice,
+    previewVoice,
+    voices: availableVoices,
+  } = useSpeechifyTTS();
   
   // Quiz mode state
   const [isQuizMode, setIsQuizMode] = useState(false);
@@ -255,7 +257,7 @@ const StudyChat = ({ onEndStudy, studentId, studentClass = "10", studentBoard = 
     } else {
       // Stop any ongoing speech first
       if (ttsSupported) {
-        await stopNativeTTS();
+        stopTTS();
       }
       setSpeakingMessageId(null);
       
@@ -277,7 +279,7 @@ const StudyChat = ({ onEndStudy, studentId, studentClass = "10", studentBoard = 
         });
       }
     }
-  }, [isListening, toast, ttsSupported, stopNativeTTS]);
+  }, [isListening, toast, ttsSupported, stopTTS]);
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -334,23 +336,21 @@ const StudyChat = ({ onEndStudy, studentId, studentClass = "10", studentBoard = 
 
     // If already speaking this message, stop it
     if (speakingMessageId === messageId) {
-      stopNativeTTS();
+      stopTTS();
       setSpeakingMessageId(null);
       return;
     }
 
     // Stop any ongoing speech first
-    stopNativeTTS();
+    stopTTS();
     
     setSpeakingMessageId(messageId);
     
     try {
-      await nativeSpeak({
+      await speechifySpeak({
         text,
-        lang: 'hi-IN',
-        rate: isQuizQuestion ? Math.max(voiceSpeed - 0.1, 0.7) : voiceSpeed,
-        pitch: 1.0,
-        volume: 1.0,
+        speed: isQuizQuestion ? Math.max(voiceSpeed - 0.1, 0.7) : voiceSpeed,
+        language: 'hi-IN',
       });
     } catch (error) {
       console.error("TTS error:", error);
@@ -366,7 +366,7 @@ const StudyChat = ({ onEndStudy, studentId, studentClass = "10", studentBoard = 
     } finally {
       setSpeakingMessageId(null);
     }
-  }, [ttsSupported, speakingMessageId, voiceSpeed, nativeSpeak, stopNativeTTS, autoSpeak, toast]);
+  }, [ttsSupported, speakingMessageId, voiceSpeed, speechifySpeak, stopTTS, autoSpeak, toast]);
 
   // Function to speak quiz question with correct numbering
   const speakQuizQuestion = useCallback((question: QuizQuestion, questionNumber?: number) => {
@@ -916,11 +916,14 @@ const StudyChat = ({ onEndStudy, studentId, studentClass = "10", studentBoard = 
                 {/* Voice Selection */}
                 <div className="space-y-2">
                   <span className="text-xs sm:text-sm font-medium">Voice Select करें</span>
-                  <VoiceSelector
-                    voices={getHindiVoices()}
-                    selectedVoice={selectedVoiceName}
-                    onVoiceChange={setSelectedVoiceName}
-                    disabled={isSpeaking}
+                  <SpeechifyVoiceSelector
+                    selectedVoiceId={currentVoiceId}
+                    onVoiceChange={setVoice}
+                    onPreview={previewVoice}
+                    isPreviewing={ttsLoading}
+                    isPlaying={isSpeaking}
+                    onStop={stopTTS}
+                    disabled={isSpeaking && !ttsLoading}
                   />
                 </div>
                 
