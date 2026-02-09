@@ -129,7 +129,7 @@ const Signup = () => {
 
     try {
       // Sign up with Supabase Auth
-      const { error: authError } = await signUp(formData.email, formData.password, {
+      const { error: authError, data: authData } = await signUp(formData.email, formData.password, {
         full_name: formData.fullName,
         phone: formData.phone,
         class: formData.class,
@@ -142,7 +142,7 @@ const Signup = () => {
       });
 
       if (authError) {
-        if (authError.message.includes("already registered")) {
+        if (authError.message.includes("already registered") || authError.message.includes("already been registered")) {
           toast({
             title: "Account exists",
             description: "This email is already registered. Please login instead.",
@@ -155,27 +155,41 @@ const Signup = () => {
         return;
       }
 
-      // Get user - email auto-confirm is enabled so user should be available
-      const { data: { user } } = await supabase.auth.getUser();
+      // Check if user was created - for repeated signups, user might be null
+      const user = authData?.user;
       
-      if (user) {
-        // Create student profile immediately
-        await createStudentProfile(user.id);
-        
+      if (!user) {
+        // This happens when email already exists (user_repeated_signup)
         toast({
-          title: "Account Created! 🎉",
-          description: "Your account is pending school approval. You'll be notified once approved.",
-        });
-        
-        // Navigate to a pending approval page or login
-        navigate("/login");
-      } else {
-        toast({
-          title: "Signup Failed",
-          description: "Could not create your account. Please try again.",
+          title: "Email Already Registered",
+          description: "This email is already registered. Please login instead.",
           variant: "destructive",
         });
+        setIsLoading(false);
+        return;
       }
+
+      // Check if user's identities is empty (another sign of existing account)
+      if (user.identities && user.identities.length === 0) {
+        toast({
+          title: "Email Already Registered",
+          description: "This email is already registered. Please login instead.",
+          variant: "destructive",
+        });
+        setIsLoading(false);
+        return;
+      }
+
+      // Create student profile
+      await createStudentProfile(user.id);
+      
+      toast({
+        title: "Account Created! 🎉",
+        description: "Your account is pending school approval. You'll be notified once approved.",
+      });
+      
+      // Navigate to login
+      navigate("/login");
     } catch (error) {
       console.error("Signup error:", error);
       toast({
