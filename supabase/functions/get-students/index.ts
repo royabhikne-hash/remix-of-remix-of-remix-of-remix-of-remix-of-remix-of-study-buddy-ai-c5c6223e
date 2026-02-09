@@ -382,7 +382,7 @@ Deno.serve(async (req) => {
         .from('students')
         .select('*')
         .eq('school_id', school_id)
-        .eq('is_banned', false)
+        .or('is_banned.eq.false,is_banned.is.null')
         .order('created_at', { ascending: false });
 
       if (studentsError) {

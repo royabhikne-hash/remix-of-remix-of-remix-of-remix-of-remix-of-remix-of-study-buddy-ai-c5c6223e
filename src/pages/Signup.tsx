@@ -203,6 +203,8 @@ const Signup = () => {
   };
 
   const createStudentProfile = async (userId: string) => {
+    let photoUrl: string | null = null;
+
     // Upload photo to Supabase Storage
     if (photoFile) {
       const fileExt = photoFile.name.split('.').pop();
@@ -214,33 +216,35 @@ const Signup = () => {
 
       if (uploadError) {
         console.error("Photo upload error:", uploadError);
+        // Continue without photo rather than blocking signup
+      } else {
+        const { data: { publicUrl } } = supabase.storage
+          .from('student-photos')
+          .getPublicUrl(fileName);
+        photoUrl = publicUrl;
       }
+    }
 
-      // Get public URL for the uploaded photo
-      const { data: { publicUrl } } = supabase.storage
-        .from('student-photos')
-        .getPublicUrl(fileName);
+    // Create student profile with the selected school
+    const { error: profileError } = await supabase
+      .from("students")
+      .insert({
+        user_id: userId,
+        photo_url: photoUrl,
+        full_name: formData.fullName,
+        phone: formData.phone,
+        parent_whatsapp: formData.parentWhatsapp,
+        class: formData.class,
+        age: parseInt(formData.age),
+        board: formData.board,
+        school_id: selectedSchoolId,
+        district: formData.district,
+        state: formData.state,
+      });
 
-      // Create student profile with the selected school
-      const { error: profileError } = await supabase
-        .from("students")
-        .insert({
-          user_id: userId,
-          photo_url: publicUrl,
-          full_name: formData.fullName,
-          phone: formData.phone,
-          parent_whatsapp: formData.parentWhatsapp,
-          class: formData.class,
-          age: parseInt(formData.age),
-          board: formData.board,
-          school_id: selectedSchoolId,
-          district: formData.district,
-          state: formData.state,
-        });
-
-      if (profileError) {
-        console.error("Profile creation error:", profileError);
-      }
+    if (profileError) {
+      console.error("Profile creation error:", profileError);
+      throw new Error("Failed to create student profile. Please try again.");
     }
   };
 
