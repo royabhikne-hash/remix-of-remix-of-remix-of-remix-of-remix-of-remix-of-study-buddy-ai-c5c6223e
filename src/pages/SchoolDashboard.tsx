@@ -231,8 +231,15 @@ const SchoolDashboard = () => {
         },
       });
 
-      if (error) {
-        console.error("Error fetching students:", error);
+      if (error || data?.error) {
+        console.error("Error fetching students:", error || data?.error);
+        // If session expired, redirect to login
+        if (data?.error?.includes?.("Invalid or expired") || data?.error?.includes?.("Session token required")) {
+          localStorage.removeItem("schoolSessionToken");
+          toast({ title: "Session expired", description: "Please login again.", variant: "destructive" });
+          navigate("/school-login");
+          return;
+        }
         setLoading(false);
         return;
       }
