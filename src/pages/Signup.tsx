@@ -107,14 +107,7 @@ const Signup = () => {
       return;
     }
     
-    if (!photoPreview || !photoFile) {
-      toast({
-        title: "Photo Required",
-        description: "Please upload your photo to continue.",
-        variant: "destructive",
-      });
-      return;
-    }
+    // Photo is optional - students can sign up without uploading a photo
 
     if (!selectedSchoolId) {
       toast({
@@ -275,7 +268,7 @@ const Signup = () => {
             <form onSubmit={handleSubmit} className="space-y-4 sm:space-y-6">
               {/* Photo Upload */}
               <div className="flex flex-col items-center">
-                <Label className="mb-2 sm:mb-3 text-sm">Student Photo *</Label>
+                <Label className="mb-2 sm:mb-3 text-sm">Student Photo (Optional)</Label>
                 <div
                   className="w-24 h-24 sm:w-32 sm:h-32 rounded-xl sm:rounded-2xl border-2 border-dashed border-input bg-muted flex items-center justify-center cursor-pointer overflow-hidden hover:border-primary transition-colors"
                   onClick={() => fileInputRef.current?.click()}
