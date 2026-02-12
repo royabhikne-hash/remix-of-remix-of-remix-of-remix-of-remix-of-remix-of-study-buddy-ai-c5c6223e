@@ -162,7 +162,7 @@ export const useNativeTTS = () => {
       }
 
       const startTime = Date.now();
-      const minExpectedDuration = 800;
+      const minExpectedDuration = 500;
       const utterance = new SpeechSynthesisUtterance(text);
       utteranceRef.current = utterance;
 
@@ -177,57 +177,51 @@ export const useNativeTTS = () => {
       utterance.volume = Math.max(0, Math.min(1, volume));
 
       let settled = false;
-      const safetyTimeout = setTimeout(() => {
-        if (!settled) {
-          settled = true;
-          resolve({ completed: false, stoppedEarly: true, error: 'timeout' });
-        }
-      }, Math.max(20000, text.length * 150));
+      const settle = (result: { completed: boolean; stoppedEarly: boolean; error?: string }) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(safetyTimeout);
+        clearInterval(resumeWatchdog);
+        resolve(result);
+      };
 
-      // Resume watchdog - detect if Chrome silently stops speaking
+      const safetyTimeout = setTimeout(() => {
+        settle({ completed: false, stoppedEarly: true, error: 'timeout' });
+      }, Math.max(30000, text.length * 200));
+
+      // Watchdog: detect if Chrome silently stops
       const resumeWatchdog = setInterval(() => {
         if (settled || isCancelledRef.current) {
           clearInterval(resumeWatchdog);
           return;
         }
         if (!window.speechSynthesis.speaking && !window.speechSynthesis.pending) {
-          // Speech stopped unexpectedly
-          clearInterval(resumeWatchdog);
-          if (!settled) {
-            settled = true;
-            clearTimeout(safetyTimeout);
-            const elapsed = Date.now() - startTime;
-            const stoppedEarly = text.length > 50 && elapsed < minExpectedDuration;
-            resolve({ completed: true, stoppedEarly });
-          }
+          const elapsed = Date.now() - startTime;
+          const stoppedEarly = text.length > 30 && elapsed < minExpectedDuration;
+          settle({ completed: true, stoppedEarly });
         }
-      }, 500);
+      }, 300);
 
       utterance.onend = () => {
-        if (settled) return;
-        settled = true;
-        clearTimeout(safetyTimeout);
         const elapsed = Date.now() - startTime;
-        const stoppedEarly = text.length > 50 && elapsed < minExpectedDuration;
-        resolve({ completed: true, stoppedEarly });
+        const stoppedEarly = text.length > 30 && elapsed < minExpectedDuration;
+        settle({ completed: true, stoppedEarly });
       };
 
       utterance.onerror = (event) => {
-        if (settled) return;
-        settled = true;
-        clearTimeout(safetyTimeout);
+        if (event.error === 'interrupted' || event.error === 'canceled') {
+          // These are expected when we cancel between chunks - not real errors
+          settle({ completed: true, stoppedEarly: false });
+          return;
+        }
         console.error('TTS Web chunk error:', event.error);
-        resolve({ completed: false, stoppedEarly: false, error: event.error });
+        settle({ completed: false, stoppedEarly: false, error: event.error });
       };
 
       try {
         window.speechSynthesis.speak(utterance);
       } catch (e) {
-        if (!settled) {
-          settled = true;
-          clearTimeout(safetyTimeout);
-          resolve({ completed: false, stoppedEarly: false, error: String(e) });
-        }
+        settle({ completed: false, stoppedEarly: false, error: String(e) });
       }
     });
   }, []);
@@ -245,20 +239,24 @@ export const useNativeTTS = () => {
     }
     if (!voice) voice = getBestVoice();
 
-    const chunks = splitIntoChunks(cleanText, 180);
+    // Use 200 char chunks - small enough for Chrome stability, large enough for smooth flow
+    const chunks = splitIntoChunks(cleanText, 200);
     chunksRef.current = chunks;
     currentChunkIndexRef.current = 0;
 
-    console.log(`TTS Web: Starting ${chunks.length} chunks (avg ${Math.round(cleanText.length / chunks.length)} chars each)`);
+    console.log(`TTS Web: Starting ${chunks.length} chunks for ~${cleanText.split(/\s+/).length} words`);
     setActiveEngine('web');
 
-    // Heartbeat to prevent Chrome pausing long speech (every 3s)
+    // Chrome pause bug workaround: heartbeat every 4s
     heartbeatRef.current = setInterval(() => {
-      if (window.speechSynthesis.speaking) {
+      if (window.speechSynthesis.speaking && !window.speechSynthesis.paused) {
         window.speechSynthesis.pause();
-        setTimeout(() => window.speechSynthesis.resume(), 50);
+        setTimeout(() => window.speechSynthesis.resume(), 30);
       }
-    }, 3000);
+    }, 4000);
+
+    let consecutiveFailures = 0;
+    const MAX_CONSECUTIVE_FAILURES = 3;
 
     for (let i = 0; i < chunks.length; i++) {
       if (isCancelledRef.current) break;
@@ -268,19 +266,34 @@ export const useNativeTTS = () => {
       const result = await speakChunkWeb(chunkText, voice, rate, pitch, volume);
 
       if (result.stoppedEarly || result.error) {
-        // Retry up to 2 times with fresh cancel
-        for (let retry = 0; retry < 2 && !isCancelledRef.current; retry++) {
-          window.speechSynthesis.cancel();
-          await new Promise(r => setTimeout(r, 200 + retry * 100));
-          const retryResult = await speakChunkWeb(chunkText, voice, rate, pitch, volume);
-          if (retryResult.completed && !retryResult.stoppedEarly) break;
+        consecutiveFailures++;
+        if (consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) {
+          console.error('TTS: Too many consecutive failures, stopping');
+          break;
         }
+        // Retry this chunk with a fresh engine reset
+        window.speechSynthesis.cancel();
+        await new Promise(r => setTimeout(r, 250));
+        if (!isCancelledRef.current) {
+          const retryResult = await speakChunkWeb(chunkText, voice, rate, pitch, volume);
+          if (!retryResult.completed || retryResult.stoppedEarly) {
+            // Second retry with longer pause
+            window.speechSynthesis.cancel();
+            await new Promise(r => setTimeout(r, 500));
+            if (!isCancelledRef.current) {
+              await speakChunkWeb(chunkText, voice, rate, pitch, volume);
+            }
+          } else {
+            consecutiveFailures = 0; // Reset on success
+          }
+        }
+      } else {
+        consecutiveFailures = 0; // Reset on success
       }
 
-      // Gap between chunks - Chrome needs breathing room
+      // Seamless transition: NO cancel between chunks, just tiny delay
       if (i < chunks.length - 1 && !isCancelledRef.current) {
-        window.speechSynthesis.cancel();
-        await new Promise(r => setTimeout(r, 120));
+        await new Promise(r => setTimeout(r, 30));
       }
     }
 
