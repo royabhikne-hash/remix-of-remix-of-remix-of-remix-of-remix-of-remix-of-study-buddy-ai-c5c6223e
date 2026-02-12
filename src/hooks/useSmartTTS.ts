@@ -3,14 +3,11 @@ import { supabase } from '@/integrations/supabase/client';
 import { useNativeTTS, type ActiveEngine } from './useNativeTTS';
 
 /**
- * Unified TTS Hook with Subscription-Aware Logic & Hybrid Fallback
+ * Unified TTS Hook - Simple 2-tier system
  * 
- * Fallback Chain:
- * 1. Pro Plan + chars remaining → Premium Speechify TTS (cloud)
- * 2. Web Speech API (speechSynthesis) — free, works in browser
- * 3. Android Native TTS (via JS bridge) — free, offline, WebView fallback
- * 
- * "No silent failure" policy: always shows error if ALL engines fail.
+ * Pro Plan + chars remaining → Premium Speechify TTS
+ * If premium fails or quota exhausted → Web Speech API (free, no limit)
+ * Basic Plan → Web Speech API directly (no limit)
  */
 
 export interface SmartTTSOptions {
@@ -35,10 +32,9 @@ interface SmartTTSState {
   error: string | null;
   currentVoiceId: string;
   usageInfo: TTSUsageInfo | null;
-  activeEngine: 'premium' | 'web' | 'native' | 'none';
+  activeEngine: 'premium' | 'web' | 'none';
 }
 
-// Speechify voice options
 export interface SpeechifyVoice {
   id: string;
   name: string;
@@ -58,7 +54,6 @@ export const SPEECHIFY_VOICES: SpeechifyVoice[] = [
   { id: 'oliver', name: 'Oliver', language: 'English (UK)', languageCode: 'en-GB', gender: 'male', description: 'British, formal' },
 ];
 
-// Audio cache for client-side repeated playback
 const clientAudioCache = new Map<string, string>();
 
 export const useSmartTTS = (studentId: string | null) => {
@@ -74,9 +69,8 @@ export const useSmartTTS = (studentId: string | null) => {
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
 
-  // Native TTS (Web Speech + Android Native fallback)
+  // Web Speech TTS (fallback / basic plan)
   const nativeTTS = useNativeTTS();
-  const isAndroidNative = nativeTTS.useAndroidNative;
 
   // Fetch subscription status
   const fetchUsageInfo = useCallback(async () => {
@@ -111,7 +105,6 @@ export const useSmartTTS = (studentId: string | null) => {
 
   useEffect(() => { fetchUsageInfo(); }, [fetchUsageInfo]);
 
-  // Cleanup audio element
   const cleanupAudio = useCallback(() => {
     if (audioRef.current) {
       audioRef.current.pause();
@@ -125,7 +118,6 @@ export const useSmartTTS = (studentId: string | null) => {
     }
   }, []);
 
-  // Stop ALL speech
   const stop = useCallback(() => {
     cleanupAudio();
     nativeTTS.stop();
@@ -234,11 +226,11 @@ export const useSmartTTS = (studentId: string | null) => {
     }
   }, [state.currentVoiceId, studentId, cleanupAudio, nativeTTS]);
 
-  // Speak using Web Speech → Android Native fallback chain
-  const speakFallback = useCallback(async (options: SmartTTSOptions): Promise<{ success: boolean; engine: 'web' | 'native' | 'none'; error?: string }> => {
+  // Speak using Web Speech API (no limit)
+  const speakWeb = useCallback(async (options: SmartTTSOptions): Promise<boolean> => {
     const { text, speed = 0.9 } = options;
 
-    console.log('TTS: Using fallback chain (Web Speech → Android Native)');
+    console.log('TTS: Using Web Speech API');
     cleanupAudio();
 
     setState(prev => ({ ...prev, isSpeaking: true, isLoading: false }));
@@ -251,25 +243,19 @@ export const useSmartTTS = (studentId: string | null) => {
         volume: 1.0,
       });
 
-      // useNativeTTS now returns { success, engine, error }
-      const engine = result.engine as ActiveEngine;
       setState(prev => ({
         ...prev,
-        activeEngine: engine === 'web' ? 'web' : engine === 'native' ? 'native' : 'none',
+        activeEngine: result.engine === 'web' ? 'web' : 'none',
       }));
 
-      return {
-        success: result.success,
-        engine: engine === 'web' ? 'web' : engine === 'native' ? 'native' : 'none',
-        error: result.error,
-      };
+      return result.success;
     } catch (error) {
-      console.error('TTS Fallback Error:', error);
-      return { success: false, engine: 'none', error: String(error) };
+      console.error('TTS Web Error:', error);
+      return false;
     }
   }, [nativeTTS, cleanupAudio]);
 
-  // Main speak function with smart routing
+  // Main speak function
   const speak = useCallback(async (options: SmartTTSOptions): Promise<void> => {
     const { text } = options;
     if (!text || text.trim().length === 0) return;
@@ -280,30 +266,27 @@ export const useSmartTTS = (studentId: string | null) => {
     const textLength = text.length;
     const usageInfo = state.usageInfo;
 
-    // Determine if premium should be tried
+    // Pro plan with remaining chars → try Premium first
     let tryPremium = false;
-
     if (studentId && usageInfo?.plan === 'pro' && usageInfo.canUsePremium && usageInfo.ttsRemaining >= textLength) {
       tryPremium = true;
-      console.log(`TTS: Trying Premium first (${usageInfo.ttsRemaining} chars remaining)`);
+      console.log(`TTS: Trying Premium (${usageInfo.ttsRemaining} chars remaining)`);
     }
 
     let success = false;
 
-    // === STEP 1: Try Premium if eligible ===
+    // STEP 1: Try Premium if eligible
     if (tryPremium) {
       success = await speakPremium(options);
       if (success) return;
-      console.log('TTS: Premium failed, trying fallback chain...');
+      console.log('TTS: Premium failed, falling back to Web Speech...');
     }
 
-    // === STEP 2 & 3: Web Speech → Android Native ===
-    const fallbackResult = await speakFallback(options);
-    success = fallbackResult.success;
+    // STEP 2: Web Speech API (no limit)
+    success = await speakWeb(options);
 
     if (!success) {
-      // === ALL ENGINES FAILED — No silent failure ===
-      const errorMsg = fallbackResult.error || 'Voice playback failed on all engines';
+      const errorMsg = 'Voice playback failed. Try again!';
       console.error(`TTS: ❌ ${errorMsg}`);
       setState(prev => ({
         ...prev,
@@ -313,14 +296,12 @@ export const useSmartTTS = (studentId: string | null) => {
         activeEngine: 'none',
       }));
     }
-  }, [state.usageInfo, studentId, stop, speakPremium, speakFallback]);
+  }, [state.usageInfo, studentId, stop, speakPremium, speakWeb]);
 
-  // Set voice
   const setVoice = useCallback((voiceId: string) => {
     setState(prev => ({ ...prev, currentVoiceId: voiceId }));
   }, []);
 
-  // Preview voice
   const previewVoice = useCallback(async (voiceId: string) => {
     const previewText = "नमस्ते! मैं आपका Study Buddy हूं।";
     await speak({ text: previewText, voiceId, language: 'hi-IN' });
@@ -328,27 +309,24 @@ export const useSmartTTS = (studentId: string | null) => {
 
   const refreshUsageInfo = useCallback(() => { fetchUsageInfo(); }, [fetchUsageInfo]);
 
-  // Get status message for UI
   const getStatusMessage = useCallback((): string | null => {
     if (!state.usageInfo) return null;
     const { plan, ttsRemaining, canUsePremium } = state.usageInfo;
-    if (plan === 'basic') return 'Using Web/Device Voice (Basic Plan)';
-    if (plan === 'pro' && !canUsePremium) return '⚠️ Voice limit reached - Using Web/Device Voice';
+    if (plan === 'basic') return 'Using Web Voice (Basic Plan)';
+    if (plan === 'pro' && !canUsePremium) return '⚠️ Voice limit reached - Using Web Voice';
     if (plan === 'pro' && ttsRemaining < 10000) return `⚠️ Low voice quota: ${Math.round(ttsRemaining / 1000)}K chars left`;
     return null;
   }, [state.usageInfo]);
 
-  // Get badge label based on active engine
-  const getEngineBadge = useCallback((): { label: string; style: 'premium' | 'web' | 'native' | 'none' } => {
+  const getEngineBadge = useCallback((): { label: string; style: 'premium' | 'web' | 'none' } => {
     switch (state.activeEngine) {
       case 'premium': return { label: '✨ Premium', style: 'premium' };
       case 'web': return { label: '🌐 Web Voice', style: 'web' };
-      case 'native': return { label: '📱 Device Voice', style: 'native' };
       default: return { label: '', style: 'none' };
     }
   }, [state.activeEngine]);
 
-  // Sync with native TTS speaking state
+  // Sync with web TTS speaking state
   useEffect(() => {
     if (nativeTTS.isSpeaking) {
       setState(prev => ({ ...prev, isSpeaking: true }));
@@ -357,13 +335,9 @@ export const useSmartTTS = (studentId: string | null) => {
     }
   }, [nativeTTS.isSpeaking]);
 
-  // Sync active engine from nativeTTS
   useEffect(() => {
-    if (nativeTTS.activeEngine !== 'none' && state.activeEngine !== 'premium') {
-      setState(prev => ({
-        ...prev,
-        activeEngine: nativeTTS.activeEngine === 'web' ? 'web' : nativeTTS.activeEngine === 'native' ? 'native' : prev.activeEngine,
-      }));
+    if (nativeTTS.activeEngine === 'web' && state.activeEngine !== 'premium') {
+      setState(prev => ({ ...prev, activeEngine: 'web' }));
     }
   }, [nativeTTS.activeEngine, state.activeEngine]);
 
@@ -383,7 +357,7 @@ export const useSmartTTS = (studentId: string | null) => {
     getStatusMessage,
     getEngineBadge,
     isPremiumActive: state.activeEngine === 'premium',
-    isAndroidNative,
+    isAndroidNative: false,
     activeEngine: state.activeEngine,
   };
 };

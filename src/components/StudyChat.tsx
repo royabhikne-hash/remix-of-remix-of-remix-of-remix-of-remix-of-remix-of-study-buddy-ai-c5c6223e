@@ -1094,9 +1094,7 @@ const StudyChat = ({ onEndStudy, studentId, studentClass = "10", studentBoard = 
                                 <span className={`ml-1 px-1.5 py-0.5 rounded text-[9px] sm:text-[10px] font-semibold ${
                                   badge.style === 'premium'
                                     ? 'bg-gradient-to-r from-amber-500 to-orange-500 text-white'
-                                    : badge.style === 'native'
-                                      ? 'bg-gradient-to-r from-green-500 to-emerald-500 text-white'
-                                      : 'bg-muted text-muted-foreground'
+                                    : 'bg-muted text-muted-foreground'
                                 }`}>
                                   {badge.label}
                                 </span>
