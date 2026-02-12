@@ -250,9 +250,8 @@ export const useNativeTTS = () => {
 
     const voices = window.speechSynthesis.getVoices();
     if (voices.length === 0) {
-      // On some Android devices, voices load late - wait and retry
       await new Promise(r => setTimeout(r, 500));
-      window.speechSynthesis.getVoices(); // trigger load
+      window.speechSynthesis.getVoices();
       await new Promise(r => setTimeout(r, 300));
     }
 
@@ -262,7 +261,6 @@ export const useNativeTTS = () => {
     }
     if (!voice) voice = getBestVoice();
 
-    // 150 char chunks - very stable on Android WebView + Chrome
     const chunks = splitIntoChunks(cleanText, 150);
     chunksRef.current = chunks;
     currentChunkIndexRef.current = 0;
@@ -270,16 +268,21 @@ export const useNativeTTS = () => {
     console.log(`TTS Web: Starting ${chunks.length} chunks, voice: ${voice?.name || 'default'}`);
     setActiveEngine('web');
 
-    // Chrome pause bug workaround: heartbeat every 5s
-    heartbeatRef.current = setInterval(() => {
-      if (window.speechSynthesis.speaking && !window.speechSynthesis.paused) {
-        window.speechSynthesis.pause();
-        setTimeout(() => window.speechSynthesis.resume(), 50);
-      }
-    }, 5000);
+    // Detect mobile - heartbeat causes MORE problems on Android WebView
+    const isMobile = /Android|webOS|iPhone|iPad|iPod/i.test(navigator.userAgent);
+    
+    // Only use heartbeat on desktop Chrome (where the 15s timeout bug exists)
+    if (!isMobile) {
+      heartbeatRef.current = setInterval(() => {
+        if (window.speechSynthesis.speaking && !window.speechSynthesis.paused) {
+          window.speechSynthesis.pause();
+          setTimeout(() => window.speechSynthesis.resume(), 50);
+        }
+      }, 5000);
+    }
 
     let consecutiveFailures = 0;
-    const MAX_CONSECUTIVE_FAILURES = 5; // More forgiving
+    const MAX_CONSECUTIVE_FAILURES = 5;
     let anyChunkSpoke = false;
 
     for (let i = 0; i < chunks.length; i++) {
@@ -308,7 +311,6 @@ export const useNativeTTS = () => {
             consecutiveFailures = 0;
             anyChunkSpoke = true;
           } else {
-            // One more retry with even longer delay
             window.speechSynthesis.cancel();
             await new Promise(r => setTimeout(r, 800));
             if (!isCancelledRef.current) {
@@ -325,10 +327,8 @@ export const useNativeTTS = () => {
         anyChunkSpoke = true;
       }
 
-      // Small gap between chunks for engine stability
-      if (i < chunks.length - 1 && !isCancelledRef.current) {
-        await new Promise(r => setTimeout(r, 50));
-      }
+      // NO delay between chunks - speak continuously
+      // The onend event already fired, so the engine is ready
     }
 
     if (heartbeatRef.current) {
@@ -336,7 +336,6 @@ export const useNativeTTS = () => {
       heartbeatRef.current = null;
     }
 
-    // Return true if at least some chunks spoke successfully
     return anyChunkSpoke || chunks.length === 0;
   }, [getBestVoice, splitIntoChunks, speakChunkWeb]);
 
