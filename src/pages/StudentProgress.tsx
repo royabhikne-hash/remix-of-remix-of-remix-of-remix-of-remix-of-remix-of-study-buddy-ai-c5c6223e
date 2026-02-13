@@ -900,6 +900,72 @@ const StudentProgress = () => {
             )}
           </div>
         </div>
+
+        {/* AI Personalized Feedback */}
+        <div className="edu-card p-6 mt-8 bg-gradient-to-br from-primary/5 via-accent/5 to-background border border-primary/20">
+          <h3 className="font-bold text-lg mb-4 flex items-center gap-2">
+            <Brain className="w-5 h-5 text-primary" />
+            AI Study Buddy Feedback
+          </h3>
+          <div className="space-y-3">
+            {(() => {
+              const feedback: string[] = [];
+              
+              // Overall performance
+              const grade = calculateGrade();
+              if (grade.grade === "A+" || grade.grade === "A") {
+                feedback.push("Kya baat hai ji! Aapki overall performance excellent hai - aap class ke top students mein ho! Aise hi mehnat karte raho!");
+              } else if (grade.grade === "B+" || grade.grade === "B") {
+                feedback.push("Accha kaam kar rahe ho ji! Thoda aur consistent padho aur quiz practice karo - A grade pakka milega!");
+              } else if (grade.grade === "C") {
+                feedback.push("Good start hai ji! Roz 30 min padho aur weak topics pe focus karo - improvement zaroor dikhega!");
+              } else {
+                feedback.push("Koi baat nahi ji! Abhi start karo - roz thoda padho, quiz do, aur Study Buddy se doubts pucho. Sab possible hai!");
+              }
+              
+              // Streak feedback
+              if (stats.streak >= 7) {
+                feedback.push("7+ day streak - aap toh discipline ka example ho! Champions wali habit hai ye!");
+              } else if (stats.streak >= 3) {
+                feedback.push(stats.streak + "-day streak chal rahi hai - bahut accha! Ab isko 7 din tak le jao, tab real magic hoga!");
+              } else if (stats.streak === 0) {
+                feedback.push("Aaj se daily study start karo ji! Bas 20 min roz - ek hafte mein difference dikhega!");
+              }
+              
+              // Quiz-specific
+              if (stats.avgQuizAccuracy >= 80) {
+                feedback.push("Quiz accuracy " + stats.avgQuizAccuracy + "% hai - outstanding ji! Aap exam-ready ho!");
+              } else if (stats.avgQuizAccuracy >= 50) {
+                feedback.push("Quiz mein " + stats.avgQuizAccuracy + "% accuracy hai. Galat answers wale topics dubara padho - next quiz mein 80%+ possible hai!");
+              } else if (stats.totalQuizzes > 0) {
+                feedback.push("Quiz practice aur karo ji! Pehle topic samjho, phir quiz do - accuracy badhegi!");
+              } else {
+                feedback.push("Abhi tak koi quiz nahi diya! Padhai ke baad quiz zaroor do - ye check karta hai ki concept samajh aaya ya nahi!");
+              }
+              
+              // Weak areas advice
+              if (areasAnalysis.weak.length > 0) {
+                const weakTopic = areasAnalysis.weak[0][0];
+                feedback.push("'" + weakTopic + "' pe thoda extra focus karo. Study Buddy se is topic pe questions pucho - main acche se samjha dunga!");
+              }
+              
+              // Strong areas encouragement
+              if (areasAnalysis.strong.length > 0) {
+                const strongTopic = areasAnalysis.strong[0][0];
+                feedback.push("'" + strongTopic + "' mein aap bahut acche ho ji! Is strength ko use karke related topics bhi cover karo!");
+              }
+              
+              return feedback.slice(0, 5).map((fb, i) => (
+                <div key={i} className="flex items-start gap-3 p-3 bg-background/70 rounded-xl border border-border/50">
+                  <div className="w-7 h-7 rounded-full bg-primary/15 flex items-center justify-center flex-shrink-0 mt-0.5">
+                    <span className="text-xs font-bold text-primary">{i + 1}</span>
+                  </div>
+                  <p className="text-sm leading-relaxed">{fb}</p>
+                </div>
+              ));
+            })()}
+          </div>
+        </div>
       </main>
     </div>
   );

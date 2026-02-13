@@ -532,49 +532,74 @@ const StudentReportModal = ({
   const getRecommendations = () => {
     const recommendations: string[] = [];
     
+    // Streak-based feedback
     if (studyStreak.currentStreak === 0) {
-      recommendations.push("🎯 शुरू करें! आज से पढ़ाई शुरू करें और streak बनाएं।");
+      recommendations.push("Aaj se start karo ji! Roz thoda padho, streak banao aur topper bano!");
     } else if (studyStreak.currentStreak < 3) {
-      recommendations.push("🔥 बढ़िया! Streak जारी रखें, रोज़ाना पढ़ें।");
+      recommendations.push("Bahut accha ji! " + studyStreak.currentStreak + "-day streak hai. Ab isko 7 din tak le jao - consistency is key!");
     } else {
-      recommendations.push("🏆 शानदार! आपकी consistency कमाल की है!");
+      recommendations.push("Kya baat hai ji! " + studyStreak.currentStreak + "-day streak - aap toh champion ban rahe ho! Aise hi continue karo!");
     }
     
-    if (weeklyStats.avgAccuracy < 50) {
-      recommendations.push("📖 Quiz accuracy बढ़ाने के लिए topics को दोबारा पढ़ें।");
-    } else if (weeklyStats.avgAccuracy >= 70) {
-      recommendations.push("⭐ Quiz performance excellent है! ऐसे ही जारी रखें।");
+    // Quiz accuracy feedback - more detailed
+    if (weeklyStats.avgAccuracy < 30) {
+      recommendations.push("Quiz accuracy thodi low hai (" + weeklyStats.avgAccuracy + "%). Pehle chapter acche se padho, phir quiz do - samajh ke padhna zaroori hai!");
+    } else if (weeklyStats.avgAccuracy < 50) {
+      recommendations.push("Quiz mein " + weeklyStats.avgAccuracy + "% accuracy hai. Accha effort hai! Weak topics dubara revise karo, accuracy zaroor badhegi!");
+    } else if (weeklyStats.avgAccuracy < 70) {
+      recommendations.push("Good job ji! " + weeklyStats.avgAccuracy + "% quiz accuracy hai. Thoda aur practice karo, 80%+ possible hai!");
+    } else {
+      recommendations.push("Outstanding ji! " + weeklyStats.avgAccuracy + "% quiz accuracy - aap toh exam ready ho! Aise hi brilliant kaam karte raho!");
     }
     
+    // Weak areas - specific actionable advice
     if (topWeakAreas.length > 0) {
-      recommendations.push(`⚠️ इन topics पर ध्यान दें: ${topWeakAreas.slice(0, 2).map(([a]) => a).join(", ")}`);
+      const weakTopics = topWeakAreas.slice(0, 2).map(([a]) => a).join(" aur ");
+      recommendations.push("'" + weakTopics + "' pe thoda aur mehnat chahiye. Inko daily 15-20 min revise karo, bahut jaldi improve hoga!");
     }
     
-    if (weeklyStats.totalTimeSpent < 60) {
-      recommendations.push("⏰ Study time बढ़ाएं - कम से कम 30 मिनट रोज़ाना पढ़ें।");
+    // Study time feedback
+    if (weeklyStats.totalTimeSpent < 30) {
+      recommendations.push("Study time badhaao ji! Kam se kam roz 30 min padho - chhota sa effort bhi bahut bada result deta hai!");
+    } else if (weeklyStats.totalTimeSpent < 120) {
+      recommendations.push("Study time theek hai, par aur badha sakte ho! Roz 45-60 min ka target rakho - toppers yahi karte hain!");
+    } else {
+      recommendations.push("Study time excellent hai ji! " + Math.round(weeklyStats.totalTimeSpent / 60) + " min padhai - aap serious student ho!");
     }
     
+    // Best study time
     if (preferredStudyTime && preferredStudyTime[1] > 0) {
       const timeLabels: Record<string, string> = {
-        morning: "सुबह",
-        afternoon: "दोपहर", 
-        evening: "शाम",
-        night: "रात",
+        morning: "subah (morning)",
+        afternoon: "dopahar (afternoon)", 
+        evening: "shaam (evening)",
+        night: "raat (night)",
       };
-      recommendations.push(`📚 Best study time: ${timeLabels[preferredStudyTime[0]]} - इस समय पढ़ना जारी रखें।`);
+      recommendations.push("Aapka best study time " + timeLabels[preferredStudyTime[0]] + " hai - is time pe focus karke padho, result aur accha aayega!");
+    }
+
+    // Class comparison feedback
+    if (classAverages) {
+      if (weeklyStats.avgAccuracy > classAverages.avgAccuracy) {
+        recommendations.push("Class average se aap aage ho ji! Keep leading - baaki students aapko follow kar rahe hain!");
+      } else {
+        recommendations.push("Class average se thoda peeche ho abhi. Par fikar mat karo - regular practice se aap bhi top kar sakte ho!");
+      }
     }
     
-    return recommendations.slice(0, 5);
+    return recommendations.slice(0, 6);
   };
   
   const recommendations = getRecommendations();
   
-  // Parent Tips
+  // Parent Tips - Hinglish
   const parentTips = [
-    "👨‍👩‍👧 बच्चे के साथ रोज़ 10 मिनट पढ़ाई की बातें करें।",
-    "🌟 छोटी-छोटी उपलब्धियों की तारीफ़ करें।",
-    "📱 Screen time को study time में balance करें।",
-    "🏠 पढ़ाई के लिए शांत जगह का इंतेज़ाम करें।",
+    "Roz 10 minute bachche se pucho 'Aaj kya naya seekha?' - isse unka confidence badhta hai aur wo share karna seekhte hain!",
+    "Jab bachcha kuch accha kare toh turant praise karo - 'Bahut accha kiya!' bolne se motivation 3x badhta hai!",
+    "Screen time aur study time ka balance banao - study ke baad 15 min break allowed hai, par pehle padhai!",
+    "Padhai ke liye ek fixed jagah aur fixed time set karo - routine se bachche ki performance automatically improve hoti hai!",
+    "Quiz results mein galti ho toh daanto mat - bolye 'Koi baat nahi, next time better karenge!' - positive approach kaam karta hai!",
+    "Weekly report dekho aur bachche ke saath discuss karo - unhe lagega ki aapko unki padhai ki parwah hai!",
   ];
   
   // Calculate Engagement Score
@@ -1208,7 +1233,7 @@ const StudentReportModal = ({
                 <div className="bg-gradient-to-br from-indigo-500/10 via-blue-500/10 to-cyan-500/10 rounded-2xl p-5 border border-indigo-500/20">
                   <h3 className="text-lg font-bold flex items-center gap-2 mb-4">
                     <FileText className="w-5 h-5 text-indigo-500" />
-                    इस हफ्ते बच्चे ने क्या पढ़ा (What Child Studied This Week)
+                    Is Hafte Ki Padhai (What Child Studied This Week)
                   </h3>
                   
                   {/* Total Study Summary */}
@@ -1216,22 +1241,22 @@ const StudentReportModal = ({
                     <div className="grid grid-cols-3 gap-4 text-center">
                       <div>
                         <p className="text-2xl font-bold text-primary">{sessions.length}</p>
-                        <p className="text-xs text-muted-foreground">कुल sessions</p>
+                        <p className="text-xs text-muted-foreground">Total sessions</p>
                       </div>
                       <div>
                         <p className="text-2xl font-bold text-accent">{Math.round(weeklyStats.totalTimeSpent / 60)}</p>
-                        <p className="text-xs text-muted-foreground">कुल मिनट</p>
+                        <p className="text-xs text-muted-foreground">Total minutes</p>
                       </div>
                       <div>
                         <p className="text-2xl font-bold text-purple-500">{subjectsStudied.length}</p>
-                        <p className="text-xs text-muted-foreground">विषय पढ़े</p>
+                        <p className="text-xs text-muted-foreground">Subjects padhe</p>
                       </div>
                     </div>
                   </div>
                   
                   {/* Detailed Session Log */}
                   <div className="space-y-3 max-h-64 overflow-y-auto">
-                    <p className="text-sm font-medium text-muted-foreground mb-2">हर session की detail:</p>
+                    <p className="text-sm font-medium text-muted-foreground mb-2">Har session ki detail:</p>
                     {sessions.slice(0, 10).map((session, i) => {
                       const sessionDate = new Date(session.created_at);
                       const dayName = sessionDate.toLocaleDateString("hi-IN", { weekday: "short" });
@@ -1376,7 +1401,7 @@ const StudentReportModal = ({
               <div>
                 <h3 className="text-lg font-bold flex items-center gap-2 mb-4">
                   <Calendar className="w-5 h-5 text-primary" />
-                  Daily Breakdown (पिछले 7 दिन)
+                  Daily Breakdown (Last 7 Days)
                 </h3>
                 <div className="grid grid-cols-7 gap-2">
                   {dailyBreakdown.map((day, i) => (
@@ -1527,7 +1552,7 @@ const StudentReportModal = ({
                 <div className="bg-gradient-to-br from-green-500/10 to-emerald-500/10 rounded-2xl p-5 border border-green-500/20">
                   <h3 className="text-lg font-bold flex items-center gap-2 mb-4">
                     <Lightbulb className="w-5 h-5 text-green-500" />
-                    AI Recommendations (सुझाव)
+                    AI Recommendations (Suggestions)
                   </h3>
                   <div className="space-y-3">
                     {recommendations.map((rec, i) => (
@@ -1546,7 +1571,7 @@ const StudentReportModal = ({
               <div className="bg-gradient-to-br from-pink-500/10 to-rose-500/10 rounded-2xl p-5 border border-pink-500/20">
                 <h3 className="text-lg font-bold flex items-center gap-2 mb-4">
                   <Heart className="w-5 h-5 text-pink-500" />
-                  Tips for Parents (माता-पिता के लिए)
+                  Tips for Parents
                 </h3>
                 <div className="grid md:grid-cols-2 gap-3">
                   {parentTips.map((tip, i) => (
